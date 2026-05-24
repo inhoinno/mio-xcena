@@ -213,6 +213,11 @@ def parse_args():
     parser.add_argument("--no-init", action="store_true",
                         help="Skip initial seq_write (memory already initialized)")
 
+    parser.add_argument("--hugepage", action="store_true",
+                        help="Use 2 MiB HugeTLB pages "
+                             "(requires per-node pool reserved at "
+                             "/sys/devices/system/node/nodeN/hugepages/hugepages-2048kB/nr_hugepages)")
+
     return parser.parse_args()
 
 
@@ -229,6 +234,8 @@ def main():
         mem_args = ["--devdax", args.devdax]
     else:
         mem_args = ["--membind", str(args.membind)]
+    if args.hugepage:
+        mem_args.append("--hugepage")
 
     if args.small_mem:
         memory_sizes = [8192]
