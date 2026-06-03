@@ -28,7 +28,7 @@ set -euo pipefail
 DEVDAX=${DEVDAX:-/dev/dax0.0}                         # CXL device in devdax mode
 DEVDAX_OFFSET=${DEVDAX_OFFSET:-0}                     # base offset into the namespace
 CXL_SIZE_MIB=${CXL_SIZE_MIB:-$(( 128 * 1024 ))}      # 128 GiB working set: 2 GiB chase + load
-CPU_LIST=${CPU_LIST:-}                               # e.g. "0-31"; empty = no pinning
+CPU_LIST=${CPU_LIST:-}                               # NUMA NODE number(s), comma-sep (e.g. "0"); NOT core IDs/ranges; empty = no pinning
 THREAD_COUNTS=( 1 2 4 8 16 32 )
 INJECT_DELAYS=( 100000 30000 10000 3000 1000 500 200 100 50 20 10 0 )
 

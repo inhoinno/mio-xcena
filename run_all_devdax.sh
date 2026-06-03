@@ -16,7 +16,7 @@
 #
 # Usage (AFK):
 #   ENABLE_LATENCY_MEASURE=ON ./build.sh         # once
-#   CPU_LIST=0-31 nohup ./run_all_devdax.sh &> afk.out &
+#   CPU_LIST=0 ./run_all_devdax.sh                # in tmux; CPU_LIST = CXL-local NUMA node(s)
 #
 # Knobs (env overrides): DEVDAX MAX_HOURS PER_RUN_TIMEOUT CPU_LIST PHASE_C_GIB
 # ─────────────────────────────────────────────────────────────────────────────
@@ -26,7 +26,7 @@ set -uo pipefail
 DEVDAX=${DEVDAX:-/dev/dax1.0}
 MAX_HOURS=${MAX_HOURS:-4}
 PER_RUN_TIMEOUT=${PER_RUN_TIMEOUT:-600}       # 10 min hard cap per microbench run
-CPU_LIST=${CPU_LIST:-}                        # pin to CXL-attached socket, e.g. "0-31"
+CPU_LIST=${CPU_LIST:-}                        # NUMA NODE number(s) of the CXL-local socket, comma-sep (e.g. "0" or "0,1"); NOT core IDs, NOT ranges. Empty = no pinning.
 PHASE_C_GIB=${PHASE_C_GIB:-512}               # working set for the BW sweep (Phase C)
 MICROBENCH=./build/microbench
 
