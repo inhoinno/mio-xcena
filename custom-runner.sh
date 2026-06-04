@@ -24,9 +24,9 @@ TOTAL_GIB=${TOTAL_GIB:-1024}          # total working set = 1 TiB, divided acros
 REPS=${REPS:-1}                       # repeats per point (bump for averaging)
 TOTAL_MIB=$(( TOTAL_GIB * 1024 ))     # 1048576 MiB for 1 TiB
 
-target_threads=( 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 28 32 64 128 )
-target_blocksize=( 4096 2097152 536870912 )      # 4 KiB, 2 MiB, 512 MiB
-workloads=( seq_read random_read zipfian_read stride_read )
+target_threads=( ${TARGET_THREADS:-1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 28 32 64 128} )   # override via TARGET_THREADS env
+target_blocksize=( ${TARGET_BLOCKSIZE:-4096 2097152 536870912} )      # 4 KiB, 2 MiB, 512 MiB; override via TARGET_BLOCKSIZE env
+workloads=( ${WORKLOADS:-seq_read random_read zipfian_read stride_read} )   # override via WORKLOADS env
 
 MICROBENCH=./build/microbench
 OUTDIR=result/$(date +%Y-%m-%d_%H-%M-%S)_latbw_tsweep
