@@ -56,7 +56,15 @@
 #define DEFAULT_ROUNDS         1u 
 #define ALIGN_BYTES            4096u 
 #define BLOCK_MAGIC            UINT64_C(0x4d5455524e424c4b) /* MTURNBLK */ 
- 
+
+#ifndef MAP_HUGE_2MB
+#define MAP_HUGE_SHIFT 26
+#define MAP_HUGE_2MB    (21 << MAP_HUGE_SHIFT)
+#endif
+#define HUGEPAGE_2MB (2UL * 1024 * 1024)
+
+
+
 struct cfg { 
     uint32_t requests; 
     uint32_t req_per_blocks; 
@@ -362,11 +370,21 @@ static bool verify_block(const struct cfg *cfg, const uint8_t *src,
 static uint8_t *xaligned_alloc(size_t bytes) 
 { 
     void *p = NULL; 
-    int rc = posix_memalign(&p, ALIGN_BYTES, bytes); 
-    if (rc != 0) { 
-        errno = rc; 
-        return NULL; 
-    } 
+    size_t len = (bytes + HUGEPAGE_2M - 1) & ~(HUGEPAGE_2MB -1 );
+
+    //int rc = posix_memalign(&p, ALIGN_BYTES, bytes);
+    void *p = mmap(NULL, len, PROT_READ | PROT_WRITE , 
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_2MB, 
+                -1, 0 );
+    
+    if (p == MAP_FAILED) {
+        /* errno already set (ENOMEM if the 2MiB pool is too small)*/
+        return NULL;
+    }
+    //if (rc != 0) { 
+    //    errno = rc; 
+    //    return NULL; 
+    //}
     return p; 
 } 
  
