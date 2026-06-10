@@ -586,6 +586,7 @@ static void *rdma_reader_thread(void *arg)
         now = now_sec();
         if (now < ctx->expire_time)
             break;
+        printf("=wait=\n");
     }
 
     return NULL; 
