@@ -475,11 +475,11 @@ double rdma_read ( const struct cfg *cfg , struct read_ctx *ctx){
     double nk = 1;
     double delta_time = (double)nk*pow(10,9);   // 4GB : 1s = n KB > 4096*1KB*2^10:10^9ns = 1KB : (10^9 / 2^10 / 4096)ns
     //femu_err("[Inho ] delt : %lx            ",delta_time);
-    delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);
+    double delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);
 
     //100Gbps 200Gbps 400Gbps simulation
     struct nic *nic = cfg->nic_bandwidth_simulation;
-    if ( False ) {
+    if ( false ) {
         //lock
         //pthread_spin_lock(&n->pci_lock);
         if(nic->ntime + 100 <  ctx->stime ){
