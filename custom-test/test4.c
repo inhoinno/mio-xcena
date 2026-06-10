@@ -50,7 +50,7 @@
 #include <time.h> 
 #include <sys/mman.h>
 #include <math.h>
- 
+
 #define DEFAULT_REQUESTS       32u 
 #define DEFAULT_REQ_PER_BLOCKS 64u 
 #define DEFAULT_BLOCK_MB       16u 
@@ -71,6 +71,7 @@
 
 #define NAND_SLC_READ 20UL * 1000
 #define NAND_SLC_WRITE 200UL * 1000
+#define NVME_DEFAULT_MAX_AZ_SIZE (128 * KiB)
 
 #define Interface_PCIeGen3x4_bwmb (4034 * MiB) //MB.s
 #define Interface_PCIeGen3x4_bw 4034
@@ -80,6 +81,8 @@
 #define Interface_RNICGen6x200G_bwmb (25000 * MiB) //MB.s
 #define Interface_RNICGen6x200G_bw 25000
 
+//uint64_t lag=0;
+double lag=0;
 typedef struct nic{
     uint64_t bw;
     double stime;
@@ -466,11 +469,11 @@ static int write_turn(const struct cfg *cfg, uint8_t *store,
     } 
     return 0; 
 } 
-double rdma_read ( struct cfg *cfg , struct read_ctx *ctx){
-
+double rdma_read ( const struct cfg *cfg , struct read_ctx *ctx){
 //#if PCIe_TIME_SIMULATION
-    uint64_t nk = nlb/2;    //# of 4K
-    uint64_t delta_time = (uint64_t)nk*pow(10,9);   // 4GB : 1s = n KB > 4096*1KB*2^10:10^9ns = 1KB : (10^9 / 2^10 / 4096)ns
+    //uint64_t nk = nlb/2;    //# of 4K
+    double nk = 1;
+    double delta_time = (double)nk*pow(10,9);   // 4GB : 1s = n KB > 4096*1KB*2^10:10^9ns = 1KB : (10^9 / 2^10 / 4096)ns
     //femu_err("[Inho ] delt : %lx            ",delta_time);
     delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);
 
@@ -484,7 +487,8 @@ double rdma_read ( struct cfg *cfg , struct read_ctx *ctx){
             nic->stime = ctx->stime;
             nic->ntime = nic->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns;
 
-            ctx->expire_time += 968*(ctx->nlb/8);
+            //ctx->expire_time += 968*(ctx->nlb/8);
+            ctx->expire_time += 968*nk;
         
         }else if(nic->ntime < (nic->stime + delta_time_ns)){
             //update lag
@@ -517,10 +521,10 @@ static void *rdma_reader_thread(void *arg)
     gate_wait(&ctx->start); 
     
     ctx->stime  = now_sec();
-    ctx->expired_time = ctx->stime;
+    ctx->expire_time = ctx->stime;
 
     /* 1 RDMA */
-    ctx->expired_time += rdma_read(cfg, ctx);
+    ctx->expire_time += rdma_read(cfg, ctx);
 
     /* 1 DRAM read*/
     for (uint64_t blk = 0; blk < ctx->read_blocks_per_req; blk++) { 
@@ -543,7 +547,7 @@ static void *rdma_reader_thread(void *arg)
                               memory_order_relaxed); 
     atomic_fetch_add_explicit(&ctx->checksum, local_sum, memory_order_relaxed); 
     double tmp = now_sec();
-    ctx->expired_time += tmp - ctx->stime;  
+    ctx->expire_time += tmp - ctx->stime;  
     return NULL; 
 } 
 static void *reader_thread(void *arg) 
