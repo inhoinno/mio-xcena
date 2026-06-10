@@ -506,7 +506,7 @@ double rdma_read ( const struct cfg *cfg , struct read_ctx *ctx){
     double delta_time = (double)nk*pow(10,9);   // 4GB : 1s = n KB > 4096*1KB*2^10:10^9ns = 1KB : (10^9 / 2^10 / 4096)ns
     //femu_err("[Inho ] delt : %lx            ",delta_time);
     double delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);
-
+    double now =0;
     //100Gbps 200Gbps 400Gbps simulation
     struct nic *nic = cfg->nic_bandwidth_simulation;
     if ( false ) {
@@ -532,6 +532,7 @@ double rdma_read ( const struct cfg *cfg , struct read_ctx *ctx){
         }
     }
     nic->stime += delta_time_ns;
+
     //femu_err("[inho] lag : %lx\n", lag);
     //pthread_spin_unlock(&n->pci_lock);
 //#endif
@@ -547,7 +548,7 @@ static void *rdma_reader_thread(void *arg)
     uint64_t local_blocks = 0; 
     uint64_t local_fail = 0; 
     uint64_t local_sum = 0; 
- 
+    double now=0;
     gate_wait(&ctx->start); 
     
     ctx->stime  = now_sec();
@@ -578,6 +579,15 @@ static void *rdma_reader_thread(void *arg)
     atomic_fetch_add_explicit(&ctx->checksum, local_sum, memory_order_relaxed); 
     double tmp = now_sec();
     ctx->expire_time += tmp - ctx->stime;  
+
+    //delay logic 
+    //while ((req = pqueue_peek())){
+    for (;;){
+        now = now_sec();
+        if (now < ctx->expire_time)
+            break;
+    }
+
     return NULL; 
 } 
 static void *reader_thread(void *arg) 
