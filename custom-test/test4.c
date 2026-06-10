@@ -418,28 +418,58 @@ static bool verify_block(const struct cfg *cfg, const uint8_t *src,
 //     return p; 
 // } 
    
-static uint8_t *xaligned_alloc(size_t bytes)
-{
-    if (bytes == 0 || bytes > SIZE_MAX - (HUGEPAGE_2MB - 1)) {
-        errno = EINVAL;                       /* 0 -> len 0; near-SIZE_MAX -> overflow */
-        return NULL;
-    }
-    size_t len = (bytes + HUGEPAGE_2MB - 1) & ~(HUGEPAGE_2MB - 1);
+// static uint8_t *xaligned_alloc_doesnotwork(size_t bytes)
+// {
+//     if (bytes == 0 || bytes > SIZE_MAX - (HUGEPAGE_2MB - 1)) {
+//         errno = EINVAL;                       /* 0 -> len 0; near-SIZE_MAX -> overflow */
+//         return NULL;
+//     }
+//     size_t len = (bytes + HUGEPAGE_2MB - 1) & ~(HUGEPAGE_2MB - 1);
 
-    void *p = mmap(NULL, len, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_2MB | MAP_POPULATE,
-                   -1, 0);
+//     void *p = mmap(NULL, len, PROT_READ | PROT_WRITE,
+//                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_2MB | MAP_POPULATE,
+//                    -1, 0);
 
 
-    if (p == MAP_FAILED) {
-        fprintf(stderr, "hugealloc FAIL: req=%zu rounded=%zu (%zu pages) errno=%d %s\n",
-                bytes, len, len / HUGEPAGE_2MB, errno, strerror(errno));
-        return NULL;
-    }
-    fprintf(stderr, "hugealloc OK: req=%zu rounded=%zu (%zu pages) @%p\n",
-            bytes, len, len / HUGEPAGE_2MB, p);
-    return (uint8_t *)p;
-}
+//     if (p == MAP_FAILED) {
+//         fprintf(stderr, "hugealloc FAIL: req=%zu rounded=%zu (%zu pages) errno=%d %s\n",
+//                 bytes, len, len / HUGEPAGE_2MB, errno, strerror(errno));
+//         return NULL;
+//     }
+//     fprintf(stderr, "hugealloc OK: req=%zu rounded=%zu (%zu pages) @%p\n",
+//             bytes, len, len / HUGEPAGE_2MB, p);
+//     return (uint8_t *)p;
+// }
+
+//HUGE WOKRING
+// static uint8_t *xaligned_alloc(size_t bytes) 
+// { 
+//     void *p = NULL; 
+//     size_t len = (bytes + HUGEPAGE_2M - 1) & ~(HUGEPAGE_2MB -1 );
+//     int rc = posix_memalign(&p, HUGEPAGE_2MB, len);
+    
+//     if (p == MAP_FAILED) {
+//         /* errno already set (ENOMEM if the 2MiB pool is too small)*/
+//         return NULL;
+//     }
+//     //if (rc != 0) { 
+//     //    errno = rc; 
+//     //    return NULL; 
+//     //}
+//     madvise(p,len,MADV_HUGEPAGE);
+//     return p; 
+// } 
+static uint8_t *xaligned_alloc(size_t bytes) 
+{ 
+    void *p = NULL; 
+    int rc = posix_memalign(&p, ALIGN_BYTES, bytes); 
+    if (rc != 0) { 
+        errno = rc; 
+        return NULL; 
+    } 
+    return p; 
+} 
+ 
  
 static uint8_t *block_ptr(const struct cfg *cfg, uint8_t *store, 
                           uint64_t chunk_bytes, uint64_t req, uint64_t blk) 
