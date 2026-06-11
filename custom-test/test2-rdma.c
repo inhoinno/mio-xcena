@@ -25,9 +25,10 @@
  *   N=32 -> 32 * 64 * 16 MiB 
  * 
  * Build: 
- *   gcc -O2 -g -std=c11 -Wall -Wextra -pthread \ 
- *       examples/mem_chunk_stripe_sweep.c \ 
- *       -o /tmp/mem_chunk_stripe_sweep 
+ *   gcc -O2 -g -std=c11 -Wall -Wextra -pthread \
+    $(pkg-config --cflags libdpdk) \
+    mem_chunk_stripe_sweep.c -o a.out \
+    $(pkg-config --libs libdpdk)
  * 
  * Example: 
  *   /tmp/mem_chunk_stripe_sweep --block-mb 32 --req_per_blocks 1024 --rounds 3 
@@ -877,7 +878,15 @@ int main(int argc, char **argv)
         usage(argv[0]); 
         return 1; 
     } 
- 
+
+    char *eal_args[] = { "mem_sim", "--file-prefix=mem_sim_tmp", "--log-level=eal,error", NULL };
+    int eal_argc = sizeof(eal_args) / sizeof(eal_args[0]) - 1;
+
+    if (rte_eal_init(eal_argc, eal_args) < 0) {
+        fprintf(stderr, "Failed to initialize EAL\n");
+        return 1;
+    }
+
     uint64_t chunks_per_block = 
         ((uint64_t)cfg.requests + cfg.chunk_slots - 1) / cfg.chunk_slots; 
     uint64_t chunk_count = (uint64_t)cfg.req_per_blocks * chunks_per_block; 
@@ -953,8 +962,6 @@ int main(int argc, char **argv)
         rte_eal_cleanup();
         return 1;
     }
-
-
     // Create rings with unique names
     for (uint32_t i = 0; i < total_rings; i++) {
         char ring_name[64];
