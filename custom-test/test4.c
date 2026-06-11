@@ -1,4 +1,4 @@
-[200~/* 
+/* 
  * mem_rdma_rtt_simulation.c 
  * 
  * Memory-only multi-turn chunk-stripe test. Yes RDMA, Yes SPDK. 
@@ -217,7 +217,7 @@ size_t rnic_ring_enqueue(struct rte_ring *ring, void **objs, size_t count)
 {
     return rte_ring_enqueue_bulk((struct rte_ring *)ring, objs, count, NULL);
 }
-bool rnic_ring_empty(struct rte_ring *ring, void **objs, size_t count)
+bool rnic_ring_empty(struct rte_ring *ring)
 {
     return rte_ring_count(ring) == 0;
 }
@@ -592,9 +592,9 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
     if ( true ) {
         //lock
         //pthread_spin_lock(&n->pci_lock);
-        if(nic->ntime + 100 <  ctx->stime ){
+        if(nic->ntime + 100 <  req->stime ){
             lag=0;
-            nic->stime = ctx->stime;
+            nic->stime = req->stime;
             nic->ntime = nic->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns;
 
             //ctx->expire_time += 968*(ctx->nlb/8);
@@ -678,6 +678,7 @@ static void *rdma_reader_thread(void *arg)
     uint64_t local_fail = 0; 
     uint64_t local_sum = 0; 
     double now=0;
+    int rc=0;
 
 
     gate_wait(&ctx->start);
@@ -698,9 +699,6 @@ static void *rdma_reader_thread(void *arg)
     if (rc != 1){
         fprintf(stderr,"RNIC to_reader enqueue failed\n");
     }
-
-    /* 1 DRAM read*/
-    double tmp = now_sec();
     
     for (uint64_t blk = 0; blk < ctx->read_blocks_per_req; blk++) { 
         const uint8_t *src = const_block_ptr(cfg, ctx->store, 
@@ -807,7 +805,7 @@ static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8
         args[i].scratch = cfg->copy_to_dst ? xaligned_alloc(cfg->block_bytes) : NULL; 
         args[i].to_nic = rings[i*2 ];
         args[i].to_reader = rings[i*2 +1];
-        args[i].rdma_req = calloc(1, sizeof(*args[i].req)); 
+        args[i].rdma_req = calloc(1, sizeof(*args[i].rdma_req)); 
         args[i].rdma_req->stime=0;
         args[i].rdma_req->expire_time=0;
 
@@ -861,8 +859,10 @@ struct device_ctx
     */
     //assert(dctx->to_nic != NULL);
     assert(dctx->reader_args != NULL);
-    assert(dctx->reader_args->to_nic != NULL);
-    assert(dctx->reader_args->to_reader != NULL);
+    for (uint32_t i = 0; i < cfg->requests; i++) { 
+        assert(dctx->reader_args[i]->to_nic != NULL);
+        assert(dctx->reader_args[i]->to_reader != NULL);
+    }
     dctx->dataplane_started = true;
     dctx->num_readers = cfg->requests;
     dctx->stime = now_sec(); 
@@ -1067,7 +1067,7 @@ int main(int argc, char **argv)
         rings[i] = rte_ring_create(ring_name, RING_SIZE, SOCKET_ID_ANY, flags);
         
         if (!rings[i]) {
-            fprintf(stderr, "Failed to create ring %s (Error: %s)\n", ring_name, strerror(rte_errno));
+            fprintf(stderr, "Failed to create ring %s \n", ring_name);
             // Cleanup existing rings
             for (uint32_t k = 0; k < i; k++) rte_ring_free(rings[k]);
             free(rings); free(store);
