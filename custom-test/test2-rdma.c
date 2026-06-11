@@ -35,7 +35,8 @@
  */ 
  
 #define _POSIX_C_SOURCE 200809L 
- 
+#define _GNU_SOURCE
+
 #include <errno.h> 
 #include <getopt.h> 
 #include <inttypes.h> 
@@ -148,6 +149,12 @@ struct worker_arg {
 
     struct rte_ring *to_nic;        //single queue * multi-queue **
     struct rte_ring *to_reader;     //single queue * multi-queue **
+
+    // New Queue Pointers
+    struct mpsc_queue *to_nic;        // MPSC: Many readers -> 1 RNIC
+    struct mpsc_node *node_pool;      // Pre-allocated node for this worker
+
+
 }; 
 
 //uint64_t lag=0;
@@ -515,14 +522,32 @@ static bool verify_block(const uint8_t *src, uint32_t block_bytes,
            src[block_bytes - 1] == fill; 
 } 
  
+// static uint8_t *xaligned_alloc(size_t bytes) 
+// { 
+//     void *p = NULL; 
+//     int rc = posix_memalign(&p, ALIGN_BYTES, bytes); 
+//     if (rc != 0) { 
+//         errno = rc; 
+//         return NULL; 
+//     } 
+//     return p; 
+// } 
+//HUGE WOKRING
 static uint8_t *xaligned_alloc(size_t bytes) 
 { 
     void *p = NULL; 
-    int rc = posix_memalign(&p, ALIGN_BYTES, bytes); 
-    if (rc != 0) { 
-        errno = rc; 
-        return NULL; 
-    } 
+    size_t len = (bytes + HUGEPAGE_2MB - 1) & ~(HUGEPAGE_2MB -1 );
+    int rc = posix_memalign(&p, HUGEPAGE_2MB, len);
+    
+    if (p == MAP_FAILED) {
+        /* errno already set (ENOMEM if the 2MiB pool is too small)*/
+        return NULL;
+    }
+    //if (rc != 0) { 
+    //    errno = rc; 
+    //    return NULL; 
+    //}
+    madvise(p,len,MADV_HUGEPAGE);
     return p; 
 } 
  
