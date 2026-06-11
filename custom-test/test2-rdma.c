@@ -97,6 +97,28 @@ enum custom_ring_type{
 	FEMU_RING_TYPE_MP_SC,		/* Multi-producer, single-consumer */
 	FEMU_RING_TYPE_MP_MC,		/* Multi-producer, multi-consumer */
 };
+ 
+// 1. FORWARD DECLARATIONS (Optional but good practice)
+struct mpsc_node;
+struct mpsc_queue;
+struct cfg;
+struct rdma_req;
+struct nic;
+struct device_ctx; // Forward declare so worker_arg can point to it
+struct worker_arg; // Forward declare so device_ctx can point to it
+
+// 2. DEFINE THE QUEUE STRUCTS FIRST (CRITICAL FIX)
+struct mpsc_node {
+    struct mpsc_node *next;
+    struct rdma_req *req; // The payload
+};
+
+struct mpsc_queue {
+    _Atomic(struct mpsc_node *) head;
+    _Atomic(struct mpsc_node *) tail;
+    struct mpsc_node stub; // Sentinel node
+};
+
 struct cfg { 
     uint32_t requests; 
     uint32_t req_per_blocks; 
@@ -109,7 +131,7 @@ struct cfg {
     bool copy_to_dst; 
     char csv_path[256]; 
 }; 
- 
+
 struct rdma_req{
     uint64_t req_id;
     double stime;       //ns
@@ -191,16 +213,6 @@ struct device_ctx
     _Atomic(bool) *response_ready;         // Flag by request_id
 
     struct nic *nic_bandwidth_simulation;
-};
-
-struct mpsc_node {
-    struct mpsc_node *next;
-    struct rdma_req *req; // The payload
-};
-struct mpsc_queue {
-    _Atomic(struct mpsc_node *) head;
-    _Atomic(struct mpsc_node *) tail;
-    struct mpsc_node stub; // Sentinel node to simplify logic
 };
 
 // Initialize the queue
@@ -878,7 +890,9 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
                          uint32_t active_requests, FILE *csv) 
 { 
     pthread_t *threads = calloc(active_requests, sizeof(*threads)); 
-    pthread_t *nric_tid = calloc(1, sizeof(*nric_thread));
+    //pthread_t *rnic_tid = calloc(1, sizeof(*rnic_tid));
+    pthread_t rnic_tid ;
+    
     struct worker_arg *args = calloc(active_requests, sizeof(*args)); 
     struct device_ctx *dctx = calloc(1, sizeof(*dctx));
     if (!dctx)
@@ -938,6 +952,7 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
         // args[i].to_reader = rings[i*2 +1];
         args[i].rdma_req = calloc(1, sizeof(*args[i].rdma_req)); 
         // CRITICAL: Allocate a private node for this worker's queue entry
+        args[i].to_nic = &dctx->rnic_queue;
         args[i].node_pool = calloc(1, sizeof(struct mpsc_node));
         args[i].rdma_req->stime=0;
         args[i].rdma_req->expire_time=0;
@@ -958,7 +973,7 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
 
 
     dctx->dataplane_started = true;
-    int rc=pthread_create(&nric_tid, NULL, rnic_thread, dctx);
+    int rc=pthread_create(&rnic_tid, NULL, rnic_thread, dctx);
     if (rc != 0) {
         perror("pthread_create rnic");
         ret = -1;
@@ -971,7 +986,8 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
         pthread_join(threads[i], NULL); 
     created = 0; 
     double t1 = now_sec(); 
- 
+    pthread_join(rnic_tid, NULL);
+    
     uint64_t blocks = atomic_load_explicit(&ctx.blocks_read, 
                                            memory_order_relaxed); 
     uint64_t fails = atomic_load_explicit(&ctx.verify_fail, 
