@@ -590,8 +590,8 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
     //uint64_t nk = nlb/2;      // KiB
     double nk = 4*4096;              // KiB, tx granularity
     double delta_time = (double)nk*pow(10,9);   // 4GB/s : 10^9 ns = n KB > 4096 * 2^10 * 1KB  : 10^9ns = 1KB : (10^9 / 2^10 / 4096)ns
-    //femu_err("[Inho ] delt : %lx            ",delta_time);
-    double delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);
+    //femu_err("[Inho ] delt : %lx            ",delta_time);    
+    double delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);   1280000
     double now =0;
     fprintf(stdout, "Tx time : %.2f     \n", delta_time_ns);
     //100Gbps 200Gbps 400Gbps simulation
@@ -606,9 +606,9 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
             nic->ntime = nic->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns;
 
             //ctx->expire_time += 968*(ctx->nlb/8);
-            req->expire_time += (4*pow(10,9)/1024/Interface_RNICGen6x100G_bwmb) * (nk/4);
-            req->expire_time += (pow(10,9)/1024/Interface_RNICGen6x100G_bwmb) * (nk);
-            //ctx->expire_time += 78.125 * (nk);
+            //req->expire_time += (4*pow(10,9)/1024/Interface_RNICGen6x100G_bwmb) * (nk/4);
+            //req->expire_time += (pow(10,9)/1024/Interface_RNICGen6x100G_bwmb) * (nk);
+            req->expire_time += 78.125 * (nk);
 
         }else if(nic->ntime < (nic->stime + delta_time_ns)){
             //update lag
@@ -702,7 +702,7 @@ static void *rdma_reader_thread(void *arg)
     if (rc != 1){
         fprintf(stderr,"RNIC to_reader enqueue failed\n");
     }
-    fprintf(stderr,"Thread %lu sent NIC, wait\n", req);
+    fprintf(stderr,"Thread %lu sent NIC, wait (now %.2f )\n", req, now_ns());
 
     while( rnic_ring_empty(ra->to_reader) ){
         continue;
@@ -712,7 +712,7 @@ static void *rdma_reader_thread(void *arg)
     if (rc != 1){
         fprintf(stderr,"RNIC to_reader enqueue failed\n");
     }
-    fprintf(stderr,"Thread %lu fin NIC\n", req);
+    fprintf(stderr,"Thread %lu fin NIC (now %.2f )\n", req, now_ns());
     for (uint64_t blk = 0; blk < ctx->read_blocks_per_req; blk++) { 
         const uint8_t *src = const_block_ptr(cfg, ctx->store, 
                                              ctx->chunk_bytes, req, blk); 
@@ -738,7 +738,7 @@ static void *rdma_reader_thread(void *arg)
     //while ((req = pqueue_peek())){
     
     now = now_ns();
-    fprintf(stderr,"Thread %lu wait start wait %.2f ns \n", now - rdma_req->expire_time);
+    fprintf(stderr,"Thread %lu wait (%.2f , %.2f) start wait %.2f ns\n",now, rdma_req->expire_time, now - rdma_req->expire_time);
     for (;;){
         now = now_ns();
         if (now < rdma_req->expire_time)
