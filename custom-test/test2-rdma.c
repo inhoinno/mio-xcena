@@ -758,7 +758,7 @@ static void *rnic_thread(void *arg){
                 }
             }*/
             rdma_read(dctx, req);
-            atomic_store_explicit(&dctx->response_ready[req->request_id], true, memory_order_release);
+            atomic_store_explicit(&dctx->response_ready[req->req_id], true, memory_order_release);
         }
         fprintf(stderr, "rnic_thread dead\n");
 
@@ -782,41 +782,38 @@ static void *rdma_reader_thread(void *arg)
     double t0=0;
     double t1=0;
     int rc=0;
-    if (false) {
-        t0=now_ns();
-        rdma_req->stime = t0;
-        rdma_req->expire_time = rdma_req->stime;
 
-        /* 1 RDMA - Send to NIC */
-        rc= rnic_ring_enqueue(wa->to_nic, (void **)&rdma_req, 1);
-        if (rc != 1){
-            fprintf(stderr,"RNIC to_reader enqueue failed\n");
-        }
-        
-        // 2. Enqueue to RNIC (Lock-Free)
-        // Re-use the pre-allocated node for this worker to avoid malloc in hot path
-        wa->node_pool->req = rdma_req;
-        mpsc_enqueue(wa->to_nic, wa->node_pool);
+    t0=now_ns();
+    rdma_req->stime = t0;
+    rdma_req->expire_time = rdma_req->stime;
 
-        //fprintf(stderr,"Thread %lu sent NIC, wait (now %.2f )\n", req, now_ns());
-        // while( rnic_ring_empty(wa->to_reader) ){
-        //     continue;
-        // }
-        // rc= rnic_ring_dequeue(wa->to_reader, (void **)&rdma_req, 1);
-        // if (rc != 1){
-        //     fprintf(stderr,"RNIC to_reader enqueue failed\n");
-        // }
+    /* 1 RDMA - Send to NIC */
+    // rc= rnic_ring_enqueue(wa->to_nic, (void **)&rdma_req, 1);
+    // if (rc != 1){
+    //     fprintf(stderr,"RNIC to_reader enqueue failed\n");
+    // }
+    // 2. Enqueue to RNIC (Lock-Free)
+    // Re-use the pre-allocated node for this worker to avoid malloc in hot path
+    wa->node_pool->req = rdma_req;
+    mpsc_enqueue(wa->to_nic, wa->node_pool);
 
-        // 3. Wait for RNIC Response (Spin on atomic flag)
-        // The RNIC thread will set this flag after processing
-        while (!atomic_load_explicit(&dctx->response_ready[req], memory_order_acquire)) {
-            // Optional: pause instruction to reduce power/bus contention
-            usleep(0); 
-        }
-        // Reset flag for next round if needed, or rely on per-sweep allocation
-        // For this benchmark, we just proceed once flagged.
-        t1= now_ns();
+    //fprintf(stderr,"Thread %lu sent NIC, wait (now %.2f )\n", req, now_ns());
+    // while( rnic_ring_empty(wa->to_reader) ){
+    //     continue;
+    // }
+    // rc= rnic_ring_dequeue(wa->to_reader, (void **)&rdma_req, 1);
+    // if (rc != 1){
+    //     fprintf(stderr,"RNIC to_reader enqueue failed\n");
+    // }
+    // 3. Wait for RNIC Response (Spin on atomic flag)
+    // The RNIC thread will set this flag after processing
+    while (!atomic_load_explicit(&dctx->response_ready[req], memory_order_acquire)) {
+        // Optional: pause instruction to reduce power/bus contention
+        usleep(0); 
     }
+    // Reset flag for next round if needed, or rely on per-sweep allocation
+    // For this benchmark, we just proceed once flagged.
+    t1= now_ns();
 
     gate_wait(&ctx->start); 
     for (uint64_t blk = 0; blk < cfg->req_per_blocks; blk++) { 
@@ -881,6 +878,7 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
                          uint32_t active_requests, FILE *csv) 
 { 
     pthread_t *threads = calloc(active_requests, sizeof(*threads)); 
+    pthread_t *nric_tid = calloc(1, sizeof(*nric_thread));
     struct worker_arg *args = calloc(active_requests, sizeof(*args)); 
     struct device_ctx *dctx = calloc(1, sizeof(*dctx));
     if (!dctx)
@@ -891,6 +889,15 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
     if (!dctx->nic_bandwidth_simulation) goto join_fail;
     dctx->dataplane_started = false;
     // 3. CRITICAL FIX: Allocate the arrays of pointers inside dctx
+    mpsc_init(&dctx->rnic_queue);
+    // 4. Allocate Response Flags (for RNIC -> Reader signaling)
+    dctx->response_ready = calloc(cfg->requests, sizeof(_Atomic(bool)));
+    if (!dctx->response_ready) goto join_fail;
+    // Initialize flags to false
+    for(uint32_t i=0; i<cfg->requests; i++) {
+        atomic_store(&dctx->response_ready[i], false);
+    }
+    dctx->num_readers = active_requests;
     dctx->reader_args = calloc(cfg->requests, sizeof(struct worker_arg *));
     // dctx->to_nic      = calloc(cfg->requests, sizeof(struct rte_ring *));
     // dctx->to_reader   = calloc(cfg->requests, sizeof(struct rte_ring *));
@@ -930,16 +937,14 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
         // args[i].to_nic = rings[i*2 ];
         // args[i].to_reader = rings[i*2 +1];
         args[i].rdma_req = calloc(1, sizeof(*args[i].rdma_req)); 
+        // CRITICAL: Allocate a private node for this worker's queue entry
+        args[i].node_pool = calloc(1, sizeof(struct mpsc_node));
         args[i].rdma_req->stime=0;
         args[i].rdma_req->expire_time=0;
         args[i].dctx = dctx;
         
-        
         //int rc = pthread_create(&threads[i], NULL, reader_thread, &args[i]); 
         int rc = pthread_create(&threads[i], NULL, rdma_reader_thread, &args[i]); 
-
-
-
         if (rc != 0) { 
             errno = rc; 
             perror("pthread_create"); 
@@ -947,9 +952,18 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
             ret = -1; 
             goto join_fail; 
         } 
-        //dctx->reader_args[i] = &args[i];
+        dctx->reader_args[i] = &args[i];
         created++; 
     } 
+
+
+    dctx->dataplane_started = true;
+    int rc=pthread_create(&nric_tid, NULL, rnic_thread, dctx);
+    if (rc != 0) {
+        perror("pthread_create rnic");
+        ret = -1;
+        goto join_fail;
+    }
  
     double t0 = now_sec(); 
     gate_open(&ctx.start); 
@@ -992,8 +1006,6 @@ join_fail:
     if (dctx) {
         if (dctx->nic_bandwidth_simulation) free(dctx->nic_bandwidth_simulation);
         if (dctx->reader_args) free(dctx->reader_args);
-        if (dctx->to_nic) free(dctx->to_nic);
-        if (dctx->to_reader) free(dctx->to_reader);
         free(dctx);
     }
 
