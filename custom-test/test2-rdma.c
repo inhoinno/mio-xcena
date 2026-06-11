@@ -755,20 +755,20 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
     pthread_t *threads = calloc(active_requests, sizeof(*threads)); 
     struct worker_arg *args = calloc(active_requests, sizeof(*args)); 
     
-    struct device_ctx *dctx = calloc(1, sizeof(*dctx));
+    if (false){
+        struct device_ctx *dctx = calloc(1, sizeof(*dctx));
+        if (!dctx)
+            goto join_fail;
 
-    if (!dctx)
-        goto join_fail;
-
-    // 2. Allocate the NIC simulation struct
-    dctx->nic_bandwidth_simulation = calloc(1, sizeof(struct nic));
-    if (!dctx->nic_bandwidth_simulation) goto join_fail;
-    dctx->dataplane_started = false;
-    // 3. CRITICAL FIX: Allocate the arrays of pointers inside dctx
-    dctx->reader_args = calloc(cfg->requests, sizeof(struct worker_arg *));
-    dctx->to_nic      = calloc(cfg->requests, sizeof(struct rte_ring *));
-    dctx->to_reader   = calloc(cfg->requests, sizeof(struct rte_ring *));
-
+        // 2. Allocate the NIC simulation struct
+        dctx->nic_bandwidth_simulation = calloc(1, sizeof(struct nic));
+        if (!dctx->nic_bandwidth_simulation) goto join_fail;
+        dctx->dataplane_started = false;
+        // 3. CRITICAL FIX: Allocate the arrays of pointers inside dctx
+        dctx->reader_args = calloc(cfg->requests, sizeof(struct worker_arg *));
+        dctx->to_nic      = calloc(cfg->requests, sizeof(struct rte_ring *));
+        dctx->to_reader   = calloc(cfg->requests, sizeof(struct rte_ring *));
+    }
     if (!threads || !args) { 
         perror("alloc thread state"); 
         free(threads); 
@@ -858,13 +858,13 @@ join_fail:
     gate_destroy(&ctx.start); 
     
     // FIXED: Free device context and its internal arrays
-    if (dctx) {
-        if (dctx->nic_bandwidth_simulation) free(dctx->nic_bandwidth_simulation);
-        if (dctx->reader_args) free(dctx->reader_args);
-        if (dctx->to_nic) free(dctx->to_nic);
-        if (dctx->to_reader) free(dctx->to_reader);
-        free(dctx);
-    }
+    // if (dctx) {
+    //     if (dctx->nic_bandwidth_simulation) free(dctx->nic_bandwidth_simulation);
+    //     if (dctx->reader_args) free(dctx->reader_args);
+    //     if (dctx->to_nic) free(dctx->to_nic);
+    //     if (dctx->to_reader) free(dctx->to_reader);
+    //     free(dctx);
+    // }
 
     free(threads); 
     free(args); 
@@ -879,13 +879,12 @@ int main(int argc, char **argv)
         return 1; 
     } 
 
-    char *eal_args[] = { "mem_sim", "--file-prefix=mem_sim_tmp", "--log-level=eal,error", NULL };
-    int eal_argc = sizeof(eal_args) / sizeof(eal_args[0]) - 1;
-
-    if (rte_eal_init(eal_argc, eal_args) < 0) {
-        fprintf(stderr, "Failed to initialize EAL\n");
-        return 1;
-    }
+    // char *eal_args[] = { "mem_sim", "--file-prefix=mem_sim_tmp", "--log-level=eal,error", NULL };
+    // int eal_argc = sizeof(eal_args) / sizeof(eal_args[0]) - 1;
+    // if (rte_eal_init(eal_argc, eal_args) < 0) {
+    //     fprintf(stderr, "Failed to initialize EAL\n");
+    //     return 1;
+    // }
 
     uint64_t chunks_per_block = 
         ((uint64_t)cfg.requests + cfg.chunk_slots - 1) / cfg.chunk_slots; 
