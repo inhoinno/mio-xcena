@@ -748,7 +748,7 @@ uint64_t local_fail = 0;
     return NULL; 
 } 
  
-static int run_one_sweep(const struct cfg *cfg, struct rte_ring **rings, const uint8_t *store, 
+static int run_one_sweep(const struct cfg *cfg, const uint8_t *store, 
                          uint64_t chunks_per_block, uint32_t round, 
                          uint32_t active_requests, FILE *csv) 
 { 
@@ -995,7 +995,7 @@ int main(int argc, char **argv)
     for (uint32_t r = 1; r <= cfg.rounds; r++) { 
         for (uint32_t c = 1; c <= cfg.sweep_max; ) { 
             if (c >= cfg.sweep_min) { 
-                if (run_one_sweep(&cfg, rings,store, chunks_per_block, r, c, csv) != 0) { 
+                if (run_one_sweep(&cfg, store, chunks_per_block, r, c, csv) != 0) { 
                     if (csv) fclose(csv); 
                     free(store); 
                     return 1; 
