@@ -593,7 +593,7 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
     //femu_err("[Inho ] delt : %lx            ",delta_time);    
     double delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);  
     double now =0;
-    fprintf(stdout, "Tx time : %.2f     \n", delta_time_ns);
+    //fprintf(stdout, "Tx time : %.2f     \n", delta_time_ns);
     //100Gbps 200Gbps 400Gbps simulation
     struct nic *nic = dctx->nic_bandwidth_simulation;
 
@@ -627,8 +627,8 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
     nic->stime += delta_time_ns;
     //femu_err("[inho] lag : %lx\n", lag);
     //pthread_spin_unlock(&n->pci_lock);
-    fprintf(stdout, "Tx Size: %.2f MB, BW: %.2f MB/s, Time: %.2f us, Lag: %.2f us\n", 
-             nk/1024, Interface_RNICGen6x100G_bw, delta_time_ns/1000.0, lag/1000.0);
+    //fprintf(stdout, "Tx Size: %.2f MB, BW: %.2f MB/s, Time: %.2f us, Lag: %.2f us\n", 
+    //         nk/1024, Interface_RNICGen6x100G_bw, delta_time_ns/1000.0, lag/1000.0);
 
     return 0;
 }
