@@ -710,7 +710,7 @@ static void *rdma_reader_thread(void *arg)
     atomic_fetch_add_explicit(&ctx->verify_fail, local_fail, 
                               memory_order_relaxed); 
     atomic_fetch_add_explicit(&ctx->checksum, local_sum, memory_order_relaxed); 
-    fprintf(stderr , "Thread %d only queuing %.2lf us",req, (t1-t0)/1000);
+    //fprintf(stderr , "Thread %d only queuing %.2lf us",req, (t1-t0)/1000);
     return NULL; 
 } 
  
