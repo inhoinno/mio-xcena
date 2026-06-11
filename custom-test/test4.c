@@ -698,6 +698,7 @@ static void *rdma_reader_thread(void *arg)
     if (rc != 1){
         fprintf(stderr,"RNIC to_reader enqueue failed\n");
     }
+    fprintf(stderr,"Thread %lu sent NIC, wait\n", req);
 
     while( rnic_ring_empty(ra->to_reader) ){
         continue;
@@ -707,7 +708,7 @@ static void *rdma_reader_thread(void *arg)
     if (rc != 1){
         fprintf(stderr,"RNIC to_reader enqueue failed\n");
     }
-    
+    fprintf(stderr,"Thread %lu fin NIC\n", req);
     for (uint64_t blk = 0; blk < ctx->read_blocks_per_req; blk++) { 
         const uint8_t *src = const_block_ptr(cfg, ctx->store, 
                                              ctx->chunk_bytes, req, blk); 
