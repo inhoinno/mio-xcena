@@ -591,7 +591,7 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
     double nk = 4*4096;              // KiB, tx granularity
     double delta_time = (double)nk*pow(10,9);   // 4GB/s : 10^9 ns = n KB > 4096 * 2^10 * 1KB  : 10^9ns = 1KB : (10^9 / 2^10 / 4096)ns
     //femu_err("[Inho ] delt : %lx            ",delta_time);    
-    double delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);   1280000
+    double delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);  
     double now =0;
     fprintf(stdout, "Tx time : %.2f     \n", delta_time_ns);
     //100Gbps 200Gbps 400Gbps simulation
