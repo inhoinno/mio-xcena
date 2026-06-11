@@ -52,10 +52,10 @@
 #include <unistd.h>
 #include <stdio.h>
 
-// DPDK Headers
-#include <rte_ring.h>
-#include <rte_eal.h>
-#include <rte_common.h>
+// // DPDK Headers
+// #include <rte_ring.h>
+// #include <rte_eal.h>
+// #include <rte_common.h>
 
 #define RING_NAME "RNIC_QUEUE"
 #define RING_SIZE 1024
@@ -816,7 +816,7 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
             ret = -1; 
             goto join_fail; 
         } 
-        dctx->reader_args[i] = &args[i];
+        //dctx->reader_args[i] = &args[i];
         created++; 
     } 
  
