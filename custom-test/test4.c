@@ -694,8 +694,6 @@ static void *rdma_reader_thread(void *arg)
     double now=0;
     int rc=0;
 
-
-    gate_wait(&ctx->start);
     rdma_req->stime  = now_ns();
     rdma_req->expire_time = rdma_req->stime;
 
@@ -709,11 +707,12 @@ static void *rdma_reader_thread(void *arg)
     while( rnic_ring_empty(ra->to_reader) ){
         continue;
     }
-    
     rc= rnic_ring_dequeue(ra->to_reader, (void **)&rdma_req, 1);
     if (rc != 1){
         fprintf(stderr,"RNIC to_reader enqueue failed\n");
     }
+
+    gate_wait(&ctx->start);
     //fprintf(stderr,"Thread %lu fin NIC (now %.2f )\n", req, now_ns());
     for (uint64_t blk = 0; blk < ctx->read_blocks_per_req; blk++) { 
         const uint8_t *src = const_block_ptr(cfg, ctx->store, 
@@ -739,7 +738,7 @@ static void *rdma_reader_thread(void *arg)
     //delay logic 
     //while ((req = pqueue_peek())){
     
-    now = now_ns();
+    //now = now_ns();
     //fprintf(stderr,"Thread %lu wait (%.2f , %.2f) start wait %.2f ns\n",now, rdma_req->expire_time, now - rdma_req->expire_time);
     // for (;;){
     //     now = now_ns();
