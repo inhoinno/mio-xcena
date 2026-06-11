@@ -604,7 +604,7 @@ static void *rnic_thread(void *arg){
     struct device_ctx *dctx = arg;
     struct nic *nic = dctx->nic_bandwidth_simulation;
     uint32_t num_readers = dctx->num_readers;
-    struct reader_arg *rargs = NULL; 
+    struct worker_arg *rargs = NULL; 
     //struct rdma_req *req=NULL;
     int rc=0;
     double now =0;
@@ -665,16 +665,16 @@ static void *rdma_reader_thread(void *arg)
         rdma_req->expire_time = rdma_req->stime;
 
         /* 1 RDMA - Send to NIC */
-        rc= rnic_ring_enqueue(ra->to_nic, (void **)&rdma_req, 1);
+        rc= rnic_ring_enqueue(wa->to_nic, (void **)&rdma_req, 1);
         if (rc != 1){
             fprintf(stderr,"RNIC to_reader enqueue failed\n");
         }
         //fprintf(stderr,"Thread %lu sent NIC, wait (now %.2f )\n", req, now_ns());
 
-        while( rnic_ring_empty(ra->to_reader) ){
+        while( rnic_ring_empty(wa->to_reader) ){
             continue;
         }
-        rc= rnic_ring_dequeue(ra->to_reader, (void **)&rdma_req, 1);
+        rc= rnic_ring_dequeue(wa->to_reader, (void **)&rdma_req, 1);
         if (rc != 1){
             fprintf(stderr,"RNIC to_reader enqueue failed\n");
         }
@@ -749,14 +749,14 @@ static int run_one_sweep(const struct cfg *cfg, struct rte_ring **rings, const u
     struct device_ctx *dctx = calloc(1, sizeof(*dctx));
 
     if (!dctx)
-        goto join_out;
+        goto join_fail;
 
     // 2. Allocate the NIC simulation struct
     dctx->nic_bandwidth_simulation = calloc(1, sizeof(struct nic));
-    if (!dctx->nic_bandwidth_simulation) goto join_out;
+    if (!dctx->nic_bandwidth_simulation) goto join_fail;
     dctx->dataplane_started = false;
     // 3. CRITICAL FIX: Allocate the arrays of pointers inside dctx
-    dctx->reader_args = calloc(cfg->requests, sizeof(struct reader_arg *));
+    dctx->reader_args = calloc(cfg->requests, sizeof(struct worker_arg *));
     dctx->to_nic      = calloc(cfg->requests, sizeof(struct rte_ring *));
     dctx->to_reader   = calloc(cfg->requests, sizeof(struct rte_ring *));
 
@@ -838,7 +838,7 @@ static int run_one_sweep(const struct cfg *cfg, struct rte_ring **rings, const u
                 read_gib, sec, gbps, reqps, fails, sum); 
         fflush(csv); 
     } 
- 
+
 join_fail: 
     for (uint32_t i = 0; i < created; i++) { 
         if (threads[i]) pthread_join(threads[i], NULL); 
@@ -847,6 +847,16 @@ join_fail:
     for (uint32_t i = created; i < active_requests; i++) 
         free(args[i].scratch); 
     gate_destroy(&ctx.start); 
+    
+    // FIXED: Free device context and its internal arrays
+    if (dctx) {
+        if (dctx->nic_bandwidth_simulation) free(dctx->nic_bandwidth_simulation);
+        if (dctx->reader_args) free(dctx->reader_args);
+        if (dctx->to_nic) free(dctx->to_nic);
+        if (dctx->to_reader) free(dctx->to_reader);
+        free(dctx);
+    }
+
     free(threads); 
     free(args); 
     return ret; 
@@ -925,13 +935,52 @@ int main(int argc, char **argv)
         } 
         fprintf(csv, "round,active_requests,read_requests,blocks,read_gib,seconds,gib_per_sec,req_per_sec,verify_fail,checksum\n"); 
     } 
- 
+
+     uint32_t total_rings = cfg.requests * 2;
+    struct rte_ring **rings = calloc(total_rings, sizeof(struct rte_ring *));
+    if (!rings) {
+        fprintf(stderr, "Failed to allocate ring pointer array\n");
+        free(store);
+        if (csv) fclose(csv);
+        rte_eal_cleanup();
+        return 1;
+    }
+
+
+    // Create rings with unique names
+    for (uint32_t i = 0; i < total_rings; i++) {
+        char ring_name[64];
+        uint32_t owner_id = i / 2; // Which reader owns this pair
+        bool is_to_nic = (i % 2 == 0);
+        
+        snprintf(ring_name, sizeof(ring_name), "ring_%s_u%u", 
+                 is_to_nic ? "to_nic" : "to_rd", owner_id);
+        
+        // Flags: SP_SC (Single Producer, Single Consumer) is safest for 1:1 threads
+        // If RNIC is single thread consuming all 'to_nic', use MP_SC for those.
+        unsigned flags = RING_F_SP_ENQ | RING_F_SC_DEQ;
+        
+        rings[i] = rte_ring_create(ring_name, RING_SIZE, SOCKET_ID_ANY, flags);
+        
+        if (!rings[i]) {
+            fprintf(stderr, "Failed to create ring %s \n", ring_name);
+            // Cleanup existing rings
+            for (uint32_t k = 0; k < i; k++) rte_ring_free(rings[k]);
+            free(rings); free(store);
+            if (csv) fclose(csv);
+            rte_eal_cleanup();
+            return 1;
+        }
+    }
+
+
+
     printf("\nround  reqs  read_reqs  blocks_read  read_GiB   seconds   GiB/s       req/s   fails   checksum\n"); 
     printf("-----  ----  ---------  -----------  --------  --------  ------  ----------  ------  ----------\n"); 
     for (uint32_t r = 1; r <= cfg.rounds; r++) { 
         for (uint32_t c = 1; c <= cfg.sweep_max; ) { 
             if (c >= cfg.sweep_min) { 
-                if (run_one_sweep(&cfg, store, chunks_per_block, r, c, csv) != 0) { 
+                if (run_one_sweep(&cfg, rings,store, chunks_per_block, r, c, csv) != 0) { 
                     if (csv) fclose(csv); 
                     free(store); 
                     return 1; 
