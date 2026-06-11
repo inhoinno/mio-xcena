@@ -736,6 +736,9 @@ static void *rdma_reader_thread(void *arg)
     //ctx->expire_time += tmp - ctx->stime;  
     //delay logic 
     //while ((req = pqueue_peek())){
+    
+    now = now_ns();
+    fprintf(stderr,"Thread %lu wait start wait %.2f ns \n", now - rdma_req->expire_time);
     for (;;){
         now = now_ns();
         if (now < rdma_req->expire_time)
