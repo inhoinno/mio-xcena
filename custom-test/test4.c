@@ -1,4 +1,4 @@
-[200~/* 
+/* 
  * mem_rdma_rtt_simulation.c 
  * 
  * Memory-only multi-turn chunk-stripe test. Yes RDMA, Yes SPDK. 
@@ -653,7 +653,7 @@ static void *rnic_thread(void *arg){
         //dctx->to_nic[i] = rargs->to_nic; 
         //dctx->to_reader[i] = rargs->to_reader;
         
-        if ( rnic_ring_empty(dctx->to_nic[i]) ){
+        if ( rnic_ring_empty(rargs->to_nic) ){
             continue;
         }
         // FIXED: Use struct rdma_req * instead of read_ctx *
