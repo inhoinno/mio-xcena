@@ -1,4 +1,4 @@
-/* 
+[200~/* 
  * mem_rdma_rtt_simulation.c 
  * 
  * Memory-only multi-turn chunk-stripe test. Yes RDMA, Yes SPDK. 
@@ -650,8 +650,8 @@ static void *rnic_thread(void *arg){
     //struct reader_ctx *
     for (uint32_t i =0; i < num_readers; i++){
         rargs = dctx->reader_args[i];
-        dctx->to_nic[i] = rargs->to_nic; 
-        dctx->to_reader[i] = rargs->to_reader;
+        //dctx->to_nic[i] = rargs->to_nic; 
+        //dctx->to_reader[i] = rargs->to_reader;
         
         if ( rnic_ring_empty(dctx->to_nic[i]) ){
             continue;
@@ -659,7 +659,7 @@ static void *rnic_thread(void *arg){
         // FIXED: Use struct rdma_req * instead of read_ctx *
         struct rdma_req *req_ptr = NULL;
 
-        rc = rnic_ring_dequeue(dctx->to_nic[i], (void **)&req_ptr, 1);
+        rc = rnic_ring_dequeue( rargs->to_nic, (void **)&req_ptr, 1);
         if (rc != 1){
             fprintf(stderr,"RNIC dequeue failed\n");
                 continue; 
@@ -667,7 +667,7 @@ static void *rnic_thread(void *arg){
         rdma_read(dctx, req_ptr);
         //req->expire_time += lat;
 
-        rc= rnic_ring_enqueue(dctx->to_reader[i], (void **)&req_ptr, 1);
+        rc= rnic_ring_enqueue(rargs->to_reader, (void **)&req_ptr, 1);
         if (rc != 1){
             fprintf(stderr,"RNIC to_reader enqueue failed\n");
         }
@@ -704,7 +704,7 @@ static void *rdma_reader_thread(void *arg)
         continue;
     }
     
-    rc= rnic_ring_dequeue(ra->to_reader, (void *)&rdma_req, 1);
+    rc= rnic_ring_dequeue(ra->to_reader, (void **)&rdma_req, 1);
     if (rc != 1){
         fprintf(stderr,"RNIC to_reader enqueue failed\n");
     }
