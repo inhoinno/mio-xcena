@@ -801,11 +801,11 @@ static int run_one_sweep(const struct cfg *cfg, struct rte_ring **rings, const u
             ret = -1; 
             goto join_fail; 
         } 
-        args[i].to_nic = rings[i*2 ];
-        args[i].to_reader = rings[i*2 +1];
-        args[i].rdma_req = calloc(1, sizeof(*args[i].rdma_req)); 
-        args[i].rdma_req->stime=0;
-        args[i].rdma_req->expire_time=0;
+        // args[i].to_nic = rings[i*2 ];
+        // args[i].to_reader = rings[i*2 +1];
+        // args[i].rdma_req = calloc(1, sizeof(*args[i].rdma_req)); 
+        // args[i].rdma_req->stime=0;
+        // args[i].rdma_req->expire_time=0;
 
         //int rc = pthread_create(&threads[i], NULL, reader_thread, &args[i]); 
         int rc = pthread_create(&threads[i], NULL, rdma_reader_thread, &args[i]); 
@@ -953,40 +953,40 @@ int main(int argc, char **argv)
         fprintf(csv, "round,active_requests,read_requests,blocks,read_gib,seconds,gib_per_sec,req_per_sec,verify_fail,checksum\n"); 
     } 
 
-     uint32_t total_rings = cfg.requests * 2;
-    struct rte_ring **rings = calloc(total_rings, sizeof(struct rte_ring *));
-    if (!rings) {
-        fprintf(stderr, "Failed to allocate ring pointer array\n");
-        free(store);
-        if (csv) fclose(csv);
-        rte_eal_cleanup();
-        return 1;
-    }
+    //uint32_t total_rings = cfg.requests * 2;
+    // struct rte_ring **rings = calloc(total_rings, sizeof(struct rte_ring *));
+    // if (!rings) {
+    //     fprintf(stderr, "Failed to allocate ring pointer array\n");
+    //     free(store);
+    //     if (csv) fclose(csv);
+    //     rte_eal_cleanup();
+    //     return 1;
+    // }
     // Create rings with unique names
-    for (uint32_t i = 0; i < total_rings; i++) {
-        char ring_name[64];
-        uint32_t owner_id = i / 2; // Which reader owns this pair
-        bool is_to_nic = (i % 2 == 0);
+    // for (uint32_t i = 0; i < total_rings; i++) {
+    //     char ring_name[64];
+    //     uint32_t owner_id = i / 2; // Which reader owns this pair
+    //     bool is_to_nic = (i % 2 == 0);
         
-        snprintf(ring_name, sizeof(ring_name), "ring_%s_u%u", 
-                 is_to_nic ? "to_nic" : "to_rd", owner_id);
+    //     snprintf(ring_name, sizeof(ring_name), "ring_%s_u%u", 
+    //              is_to_nic ? "to_nic" : "to_rd", owner_id);
         
-        // Flags: SP_SC (Single Producer, Single Consumer) is safest for 1:1 threads
-        // If RNIC is single thread consuming all 'to_nic', use MP_SC for those.
-        unsigned flags = RING_F_SP_ENQ | RING_F_SC_DEQ;
+    //     // Flags: SP_SC (Single Producer, Single Consumer) is safest for 1:1 threads
+    //     // If RNIC is single thread consuming all 'to_nic', use MP_SC for those.
+    //     unsigned flags = RING_F_SP_ENQ | RING_F_SC_DEQ;
         
-        rings[i] = rte_ring_create(ring_name, RING_SIZE, SOCKET_ID_ANY, flags);
+    //     rings[i] = rte_ring_create(ring_name, RING_SIZE, SOCKET_ID_ANY, flags);
         
-        if (!rings[i]) {
-            fprintf(stderr, "Failed to create ring %s \n", ring_name);
-            // Cleanup existing rings
-            for (uint32_t k = 0; k < i; k++) rte_ring_free(rings[k]);
-            free(rings); free(store);
-            if (csv) fclose(csv);
-            rte_eal_cleanup();
-            return 1;
-        }
-    }
+    //     if (!rings[i]) {
+    //         fprintf(stderr, "Failed to create ring %s \n", ring_name);
+    //         // Cleanup existing rings
+    //         for (uint32_t k = 0; k < i; k++) rte_ring_free(rings[k]);
+    //         free(rings); free(store);
+    //         if (csv) fclose(csv);
+    //         rte_eal_cleanup();
+    //         return 1;
+    //     }
+    // }
 
 
 
