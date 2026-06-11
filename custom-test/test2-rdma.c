@@ -56,6 +56,9 @@
 #include <rte_eal.h>
 #include <rte_common.h>
 
+#define RING_NAME "RNIC_QUEUE"
+#define RING_SIZE 1024
+
 #define DEFAULT_REQUESTS     32u 
 #define DEFAULT_REQ_PER_BLOCKS 64u 
 #define DEFAULT_CHUNK_SLOTS  32u 
@@ -87,6 +90,11 @@
 #define Interface_RNICGen6x200G_bwmb (25000 * MiB) //MB.s
 #define Interface_RNICGen6x200G_bw 25000           //MB/s
 
+enum custom_ring_type{
+    FEMU_RING_TYPE_SP_SC,		/* Single-producer, single-consumer */
+	FEMU_RING_TYPE_MP_SC,		/* Multi-producer, single-consumer */
+	FEMU_RING_TYPE_MP_MC,		/* Multi-producer, multi-consumer */
+};
 struct cfg { 
     uint32_t requests; 
     uint32_t req_per_blocks; 
@@ -658,7 +666,7 @@ static void *rdma_reader_thread(void *arg)
     uint64_t req = wa->request_id; 
     double t0=0;
     double t1=0;
-
+    int rc=0;
     if (false) {
         t0=now_ns();
         rdma_req->stime = t0;
@@ -701,7 +709,7 @@ static void *rdma_reader_thread(void *arg)
     atomic_fetch_add_explicit(&ctx->verify_fail, local_fail, 
                               memory_order_relaxed); 
     atomic_fetch_add_explicit(&ctx->checksum, local_sum, memory_order_relaxed); 
-    fprintf(stderr , "Thread %d only queuing %.2f us", (t1-t0)/1000);
+    fprintf(stderr , "Thread %d only queuing %.2lf us", (t1-t0)/1000);
     return NULL; 
 } 
  
