@@ -534,7 +534,7 @@ static bool verify_block(const struct cfg *cfg, const uint8_t *src,
 static uint8_t *xaligned_alloc(size_t bytes) 
 { 
     void *p = NULL; 
-    size_t len = (bytes + HUGEPAGE_2M - 1) & ~(HUGEPAGE_2MB -1 );
+    size_t len = (bytes + HUGEPAGE_2MB - 1) & ~(HUGEPAGE_2MB -1 );
     int rc = posix_memalign(&p, HUGEPAGE_2MB, len);
     
     if (p == MAP_FAILED) {
