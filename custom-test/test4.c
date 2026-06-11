@@ -110,8 +110,9 @@ struct cfg {
 
 struct rdma_req{
 
-    double stime;
-    double expire_time;
+    double stime;       //ns
+    double expire_time; //ns
+
 };
  
 struct block_tag { 
@@ -398,6 +399,13 @@ static double now_sec(void)
     clock_gettime(CLOCK_MONOTONIC, &ts); 
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9; 
 } 
+static double now_ns(void) 
+{ 
+    struct timespec ts; 
+    clock_gettime(CLOCK_MONOTONIC, &ts); 
+    // Convert seconds to nanoseconds and add the existing nanoseconds
+    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec; 
+}
 static void gate_init(struct start_gate *g, uint32_t total) 
 { 
     pthread_mutex_init(&g->mu, NULL); 
@@ -638,7 +646,7 @@ static void *rnic_thread(void *arg){
     while(!(dctx->dataplane_started)){
         usleep(10); 
     }
-
+    fprintf(stderr, "rnic_thread begin\n");
     //struct reader_ctx *
     for (uint32_t i =0; i < num_readers; i++){
         rargs = dctx->reader_args[i];
@@ -682,7 +690,7 @@ static void *rdma_reader_thread(void *arg)
 
 
     gate_wait(&ctx->start);
-    rdma_req->stime  = now_sec();
+    rdma_req->stime  = now_ns();
     rdma_req->expire_time = rdma_req->stime;
 
     /* 1 RDMA - Send to NIC */
@@ -724,7 +732,7 @@ static void *rdma_reader_thread(void *arg)
     //delay logic 
     //while ((req = pqueue_peek())){
     for (;;){
-        now = now_sec();
+        now = now_ns();
         if (now < rdma_req->expire_time)
             break;
         //printf("=wait=\n");
@@ -772,6 +780,7 @@ static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8
     pthread_t *threads = calloc(cfg->requests+1, sizeof(*threads)); 
     struct reader_arg *args = calloc(cfg->requests, sizeof(*args)); 
     struct device_ctx *dctx = calloc(1, sizeof(*dctx));
+
     if (!dctx)
         goto join_out;
 
@@ -844,25 +853,6 @@ static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8
         created++; 
     } 
 
-
-    /*
-    
-struct device_ctx
-{
-    uint64_t bw;
-    double stime;   //Device start time
-    double ntime;   //Next available time
-    bool busy;
-    bool dataplane_stared=false;
-
-    uint32_t num_readers;
-    struct reader_arg **reader_args; 
-    struct rte_ring **to_nic;
-    struct rte_ring **to_reader;
-
-    struct nic *nic_bandwidth_simulation;
-};
-    */
     //assert(dctx->to_nic != NULL);
     assert(dctx->reader_args != NULL);
     for (uint32_t i = 0; i < cfg->requests; i++) { 
@@ -871,8 +861,8 @@ struct device_ctx
     }
     dctx->dataplane_started = true;
     dctx->num_readers = cfg->requests;
-    dctx->stime = now_sec(); 
-    dctx->ntime = now_sec(); 
+    dctx->stime = now_ns(); 
+    dctx->ntime = now_ns(); 
     int rc = pthread_create(&threads[cfg->requests], NULL, rnic_thread, dctx); 
     
     double t0 = now_sec(); 
@@ -881,6 +871,7 @@ struct device_ctx
         pthread_join(threads[i], NULL); 
     created = 0; 
     double t1 = now_sec(); 
+    dctx->dataplane_started = false;
  
     *out_sec = t1 - t0; 
     *out_blocks = atomic_load_explicit(&ctx.blocks_read, memory_order_relaxed); 
