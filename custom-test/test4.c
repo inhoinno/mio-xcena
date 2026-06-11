@@ -775,8 +775,14 @@ static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8
     if (!dctx)
         goto join_out;
 
-    dctx->nic_bandwidth_simulation = (struct nic *)calloc(1, sizeof(struct nic));
+    // 2. Allocate the NIC simulation struct
+    dctx->nic_bandwidth_simulation = calloc(1, sizeof(struct nic));
+    if (!dctx->nic_bandwidth_simulation) goto join_out;
     dctx->dataplane_started = false;
+    // 3. CRITICAL FIX: Allocate the arrays of pointers inside dctx
+    dctx->reader_args = calloc(cfg->requests, sizeof(struct reader_arg *));
+    dctx->to_nic      = calloc(cfg->requests, sizeof(struct rte_ring *));
+    dctx->to_reader   = calloc(cfg->requests, sizeof(struct rte_ring *));
 
     if (!threads || !args) { 
         perror("alloc thread state"); 
