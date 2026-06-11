@@ -617,9 +617,7 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
             nic->stime = nic->ntime;
             nic->ntime = nic->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns; //1ms
             
-            req->expire_time += lag;
-            nic->stime += delta_time_ns;
-        
+            req->expire_time += lag;        
         }else if (req->stime < nic->ntime && lag != 0 ){
             
             req->expire_time+=lag;
@@ -628,6 +626,9 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
     nic->stime += delta_time_ns;
     //femu_err("[inho] lag : %lx\n", lag);
     //pthread_spin_unlock(&n->pci_lock);
+    fprintf(stdout, "Tx Size: %.2f MB, BW: %.2f MB/s, Time: %.2f us, Lag: %.2f us\n", 
+             nk/1024, Interface_RNICGen6x100G_bw, delta_time_ns/1000.0, lag/1000.0);
+
     return 0;
 }
 
