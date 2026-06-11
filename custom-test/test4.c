@@ -743,7 +743,7 @@ static void *rdma_reader_thread(void *arg)
     fprintf(stderr,"Thread %lu wait (%.2f , %.2f) start wait %.2f ns\n",now, rdma_req->expire_time, now - rdma_req->expire_time);
     for (;;){
         now = now_ns();
-        if (now < rdma_req->expire_time)
+        if (now > rdma_req->expire_time)
             break;
         //printf("=wait=\n");
     }
