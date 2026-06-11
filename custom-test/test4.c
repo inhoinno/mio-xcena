@@ -1,7 +1,7 @@
 /* 
  * mem_rdma_rtt_simulation.c 
  * 
- * Memory-only multi-turn chunk-stripe test. No RDMA, no SPDK. 
+ * Memory-only multi-turn chunk-stripe test. Yes RDMA, Yes SPDK. 
  * 
  * Default shape: 
  *   - requests        = 32 
@@ -50,6 +50,17 @@
 #include <time.h> 
 #include <sys/mman.h>
 #include <math.h>
+#include <unistd.h>
+#include <stdio.h>
+
+// DPDK Headers
+#include <rte_ring.h>
+#include <rte_eal.h>
+#include <rte_common.h>
+//#include "./rnic_sim.h"
+
+#define RING_NAME "RNIC_QUEUE"
+#define RING_SIZE 1024
 
 #define DEFAULT_REQUESTS       32u 
 #define DEFAULT_REQ_PER_BLOCKS 64u 
@@ -77,18 +88,15 @@
 #define Interface_PCIeGen3x4_bw 4034
 
 #define Interface_RNICGen6x100G_bwmb (12500 * MiB) //MB.s
-#define Interface_RNICGen6x100G_bw 12500
+#define Interface_RNICGen6x100G_bw 12500           //MB/s
 #define Interface_RNICGen6x200G_bwmb (25000 * MiB) //MB.s
-#define Interface_RNICGen6x200G_bw 25000
+#define Interface_RNICGen6x200G_bw 25000           //MB/s
 
-//uint64_t lag=0;
-double lag=0;
-typedef struct nic{
-    uint64_t bw;
-    double stime;
-    double ntime;   //Next available time
-    bool busy;
-} nic;
+enum custom_ring_type{
+    FEMU_RING_TYPE_SP_SC,		/* Single-producer, single-consumer */
+	FEMU_RING_TYPE_MP_SC,		/* Multi-producer, single-consumer */
+	FEMU_RING_TYPE_MP_MC,		/* Multi-producer, multi-consumer */
+};
 
 struct cfg { 
     uint32_t requests; 
@@ -98,7 +106,6 @@ struct cfg {
     bool verify; 
     bool copy_to_dst; 
     char csv_path[256]; 
-    struct nic *nic_bandwidth_simulation;
 }; 
 
 struct rdma_req{
@@ -123,8 +130,6 @@ struct start_gate {
     bool open; 
 }; 
 
-
-
 struct read_ctx { 
     const struct cfg *cfg; 
     const uint8_t *store; 
@@ -138,15 +143,85 @@ struct read_ctx {
     atomic_uint_fast64_t verify_fail; 
     atomic_uint_fast64_t checksum; 
     struct start_gate start; 
+
 }; 
- 
+
 struct reader_arg { 
     struct read_ctx *ctx; 
     uint8_t *scratch; 
     uint32_t request_id; 
 
+    struct rte_ring *to_nic;        //single queue * multi-queue **
+    struct rte_ring *to_reader;     //single queue * multi-queue **
 }; 
- 
+
+//uint64_t lag=0;
+double lag=0;
+typedef struct nic{
+    uint64_t bw;
+    double stime;
+    double ntime;   //Next available time
+    bool busy;
+} nic;
+
+struct device_ctx
+{
+    uint64_t bw;
+    double stime;   //Device start time
+    double ntime;   //Next available time
+    bool busy;
+    bool dataplane_stared=false;
+
+    uint32_t num_readers;
+    struct reader_arg **reader_args; 
+    struct rte_ring **to_nic;
+    struct rte_ring **to_reader;
+
+    struct nic *nic_bandwidth_simulation;
+};
+
+struct rte_ring *rnic_ring_create(enum custom_ring_type type, size_t count)
+{
+	char ring_name[64];
+	static uint32_t ring_num = 0;
+	unsigned flags = 0;
+
+	switch (type) {
+	case FEMU_RING_TYPE_SP_SC:
+		flags = RING_F_SP_ENQ | RING_F_SC_DEQ;
+		break;
+	case FEMU_RING_TYPE_MP_SC:
+		flags = RING_F_SC_DEQ;
+		break;
+	case FEMU_RING_TYPE_MP_MC:
+		flags = 0;
+		break;
+	default:
+		return NULL;
+	}
+
+	snprintf(ring_name, sizeof(ring_name), "ring_%u_%d",
+		 __sync_fetch_and_add(&ring_num, 1), getpid());
+
+	return rte_ring_create(ring_name, count, flags);
+}
+void rnic_ring_free (struct rte_ring *ring ){
+    rte_ring_free((struct rte_ring *) ring);
+}
+
+size_t rnic_ring_enqueue(struct rte_ring *ring, void **objs, size_t count)
+{
+    return rte_ring_enqueue_bulk((struct rte_ring *)ring, objs, count, NULL);
+}
+bool rnic_ring_empty(struct rte_ring *ring, void **objs, size_t count)
+{
+    return rte_ring_count(ring);
+}
+size_t rnic_ring_dequeue(struct rte_ring *ring, void **objs, size_t count)
+{
+    return rte_ring_dequeue_burst((struct rte_ring *)ring, objs, count, NULL);
+}
+
 static void usage(const char *prog) 
 { 
     fprintf(stderr, 
@@ -469,8 +544,6 @@ static uint8_t *xaligned_alloc(size_t bytes)
     } 
     return p; 
 } 
- 
- 
 static uint8_t *block_ptr(const struct cfg *cfg, uint8_t *store, 
                           uint64_t chunk_bytes, uint64_t req, uint64_t blk) 
 { 
@@ -499,17 +572,20 @@ static int write_turn(const struct cfg *cfg, uint8_t *store,
     } 
     return 0; 
 } 
-double rdma_read ( const struct cfg *cfg , struct read_ctx *ctx){
-//#if PCIe_TIME_SIMULATION
-    //uint64_t nk = nlb/2;    //# of 4K
-    double nk = 1;
-    double delta_time = (double)nk*pow(10,9);   // 4GB : 1s = n KB > 4096*1KB*2^10:10^9ns = 1KB : (10^9 / 2^10 / 4096)ns
+
+double rdma_read ( struct device_ctx *dctx , struct read_ctx *ctx){
+
+    //uint64_t nk = nlb/2;      // KiB
+    double nk = 4*4096;              // KiB, tx granularity
+    double delta_time = (double)nk*pow(10,9);   // 4GB/s : 10^9 ns = n KB > 4096 * 2^10 * 1KB  : 10^9ns = 1KB : (10^9 / 2^10 / 4096)ns
     //femu_err("[Inho ] delt : %lx            ",delta_time);
     double delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);
     double now =0;
+    fprintf(stdout, "Tx time : %.2f     \n", delta_time_ns);
     //100Gbps 200Gbps 400Gbps simulation
-    struct nic *nic = cfg->nic_bandwidth_simulation;
-    if ( false ) {
+    struct nic *nic = dctx->nic_bandwidth_simulation;
+
+    if ( true ) {
         //lock
         //pthread_spin_lock(&n->pci_lock);
         if(nic->ntime + 100 <  ctx->stime ){
@@ -518,25 +594,70 @@ double rdma_read ( const struct cfg *cfg , struct read_ctx *ctx){
             nic->ntime = nic->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns;
 
             //ctx->expire_time += 968*(ctx->nlb/8);
-            ctx->expire_time += 968*nk;
-        
+            ctx->expire_time += (4*pow(10,9)/1024/Interface_RNICGen6x100G_bwmb) * (nk/4);
+            ctx->expire_time += (pow(10,9)/1024/Interface_RNICGen6x100G_bwmb) * (nk);
+            //ctx->expire_time += 78.125 * (nk);
+
         }else if(nic->ntime < (nic->stime + delta_time_ns)){
             //update lag
             lag = (nic->ntime - ctx->stime);
+            
             nic->stime = nic->ntime;
             nic->ntime = nic->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns; //1ms
+            
             ctx->expire_time += lag;
             nic->stime += delta_time_ns;
+        
         }else if (ctx->stime < nic->ntime && lag != 0 ){
+            
             ctx->expire_time+=lag;
         }
     }
     nic->stime += delta_time_ns;
-
     //femu_err("[inho] lag : %lx\n", lag);
     //pthread_spin_unlock(&n->pci_lock);
-//#endif
+}
 
+
+static void *rnic_thread(void *arg){
+
+    //struct device_arg *da = arg;
+    struct device_ctx *dctx = arg;
+    struct nic *nic = dctx->nic_bandwidth_simulation;
+    uint32_t num_readers = dctx->num_readers;
+    struct reader_arg *rargs = NULL; 
+    struct read_ctx *req=NULL;
+    int rc=0;
+    double now =0;
+    double lat =0;
+
+    while(!*(dctx->dataplane_started)){
+        usleep(10); 
+    }
+
+    //struct reader_ctx *
+    for (uint32_t i =0; i < num_readers; i++){
+        rargs = dctx->reader_args[i];
+        dctx->to_nic[i] = rargs->to_nic; 
+        dctx->to_reader[i] = rargs->to_reader;
+        
+        if ( rnic_ring_empty(dctx->to_nic[i]) ){
+            continue;
+        }
+
+        rc = rnic_ring_dequeue(dctx->to_nic[i], (void *)&req, 1);
+        if (rc != 1){
+            fprintf(stderr,"RNIC dequeue failed\n");
+        }
+        rdma_read(dctx, req);
+        //req->expire_time += lat;
+
+        rc= rnic_ring_enqueue(dctx->to_reader[i], (void *)&req, 1);
+        if (rc != 1){
+            fprintf(stderr,"RNIC to_reader enqueue failed\n");
+        }
+    }
+    return NULL;
 }
 
 static void *rdma_reader_thread(void *arg) 
@@ -549,15 +670,28 @@ static void *rdma_reader_thread(void *arg)
     uint64_t local_fail = 0; 
     uint64_t local_sum = 0; 
     double now=0;
-    gate_wait(&ctx->start); 
-    
+
+
+    gate_wait(&ctx->start);
     ctx->stime  = now_sec();
     ctx->expire_time = ctx->stime;
 
     /* 1 RDMA */
-    ctx->expire_time += rdma_read(cfg, ctx);
+    rc= rnic_ring_enqueue(&ra->to_nic, (void *)&ctx, 1);
+        if (rc != 1){
+            fprintf(stderr,"RNIC to_reader enqueue failed\n");
+        }
+    while( rnic_ring_empty(&ra->to_reader) ){
+        continue;
+    }
+    rc= rnic_ring_dequeue(&ra->to_reader, (void *)&ctx, 1);
+        if (rc != 1){
+            fprintf(stderr,"RNIC to_reader enqueue failed\n");
+        }
 
     /* 1 DRAM read*/
+    double tmp = now_sec();
+    
     for (uint64_t blk = 0; blk < ctx->read_blocks_per_req; blk++) { 
         const uint8_t *src = const_block_ptr(cfg, ctx->store, 
                                              ctx->chunk_bytes, req, blk); 
@@ -577,18 +711,16 @@ static void *rdma_reader_thread(void *arg)
     atomic_fetch_add_explicit(&ctx->verify_fail, local_fail, 
                               memory_order_relaxed); 
     atomic_fetch_add_explicit(&ctx->checksum, local_sum, memory_order_relaxed); 
-    double tmp = now_sec();
-    ctx->expire_time += tmp - ctx->stime;  
 
+    ctx->expire_time += tmp - ctx->stime;  
     //delay logic 
     //while ((req = pqueue_peek())){
     for (;;){
         now = now_sec();
         if (now < ctx->expire_time)
             break;
-        printf("=wait=\n");
+        //printf("=wait=\n");
     }
-
     return NULL; 
 } 
 static void *reader_thread(void *arg) 
@@ -624,12 +756,16 @@ static void *reader_thread(void *arg)
     atomic_fetch_add_explicit(&ctx->checksum, local_sum, memory_order_relaxed); 
     return NULL; 
 } 
-static int read_rdma(const struct cfg *cfg, const uint8_t *store, 
+static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8_t *store, 
                            uint64_t chunk_bytes, uint32_t turn, 
                            double *out_sec, uint64_t *out_blocks, 
                            uint64_t *out_fails, uint64_t *out_checksum){
-    pthread_t *threads = calloc(cfg->requests, sizeof(*threads)); 
+    
+    pthread_t *threads = calloc(cfg->requests+1, sizeof(*threads)); 
     struct reader_arg *args = calloc(cfg->requests, sizeof(*args)); 
+    struct device_ctx *dctx = calloc(1, sizeof(*dctx));
+    dctx->nic_bandwidth_simulation = (struct nic *)calloc(1, sizeof(struct nic));
+    
     if (!threads || !args) { 
         perror("alloc thread state"); 
         free(threads); 
@@ -655,12 +791,21 @@ static int read_rdma(const struct cfg *cfg, const uint8_t *store,
         args[i].ctx = &ctx; 
         args[i].request_id = i; 
         args[i].scratch = cfg->copy_to_dst ? xaligned_alloc(cfg->block_bytes) : NULL; 
+        args[i].to_nic = rings[i*2 ];
+        args[i].to_reader = rings[i*2 +1];
+        s
         if (cfg->copy_to_dst && !args[i].scratch) { 
             perror("alloc scratch"); 
             gate_open_after_created(&ctx.start, created); 
             ret = -1; 
             goto join_out; 
         } 
+
+        if (!args[i].to_nic || !args[i].to_reader){
+            fprintf(stderr, "Failed to args to_nic rings\n");
+            rte_eal_cleanup();
+            return 1;
+        }
  
         //int rc = pthread_create(&threads[i], NULL, reader_thread, &args[i]); 
         int rc = pthread_create(&threads[i], NULL, rdma_reader_thread, &args[i]); 
@@ -672,9 +817,40 @@ static int read_rdma(const struct cfg *cfg, const uint8_t *store,
             ret = -1; 
             goto join_out; 
         } 
+
+        dctx->reader_args[i] = &args[i];
         created++; 
     } 
- 
+
+
+    /*
+    
+struct device_ctx
+{
+    uint64_t bw;
+    double stime;   //Device start time
+    double ntime;   //Next available time
+    bool busy;
+    bool dataplane_stared=false;
+
+    uint32_t num_readers;
+    struct reader_arg **reader_args; 
+    struct rte_ring **to_nic;
+    struct rte_ring **to_reader;
+
+    struct nic *nic_bandwidth_simulation;
+};
+    */
+    //assert(dctx->to_nic != NULL);
+    assert(dctx->reader_args != NULL);
+    assert(dctx->reader_args->to_nic != NULL);
+    assert(dctx->reader_args->to_reader != NULL);
+    dctx->dataplane_started = true;
+    dctx->num_readers = cfg->requests;
+    dctx->stime = now_sec(); 
+    dctx->ntime = now_sec(); 
+    int rc = pthread_create(&threads[cfg->requests], NULL, rnic_thread, dctx); 
+    
     double t0 = now_sec(); 
     gate_open(&ctx.start); 
     for (uint32_t i = 0; i < cfg->requests; i++) 
@@ -781,7 +957,16 @@ int main(int argc, char **argv)
         usage(argv[0]); 
         return 1; 
     } 
-    cfg.nic_bandwidth_simulation = (struct nic *)calloc( 1, sizeof(struct nic));
+    //cfg.nic_bandwidth_simulation = (struct nic *)calloc( 1, sizeof(struct nic));
+    
+    char *eal_args[] = { "mem_sim", "--file-prefix=mem_sim_tmp", "--log-level=eal,error", NULL };
+    int eal_argc = sizeof(eal_args) / sizeof(eal_args[0]) - 1;
+
+    if (rte_eal_init(eal_argc, eal_args) < 0) {
+        fprintf(stderr, "Failed to initialize EAL\n");
+        return 1;
+    }
+
     uint64_t chunk_bytes = 0, total_chunks = 0, store_bytes = 0; 
     if (!checked_mul_u64(cfg.requests, cfg.block_bytes, &chunk_bytes) || 
         !checked_mul_u64(cfg.rounds, cfg.req_per_blocks, &total_chunks) || 
@@ -829,7 +1014,41 @@ int main(int argc, char **argv)
         } 
         fprintf(csv, "turn,write_blocks,read_blocks_per_request,total_read_blocks,write_gib,write_seconds,write_gib_per_sec,read_gib,read_seconds,agg_read_gib_per_sec,verify_fail,checksum\n"); 
     } 
- 
+    uint32_t total_rings = cfg.requests * 2;
+    struct rte_ring **rings = calloc(total_rings, sizeof(struct rte_ring *));
+    if (!rings) {
+        fprintf(stderr, "Failed to allocate ring pointer array\n");
+        free(store);
+        if (csv) fclose(csv);
+        rte_eal_cleanup();
+        return 1;
+    }
+    // Create rings with unique names
+    for (uint32_t i = 0; i < total_rings; i++) {
+        char ring_name[64];
+        uint32_t owner_id = i / 2; // Which reader owns this pair
+        bool is_to_nic = (i % 2 == 0);
+        
+        snprintf(ring_name, sizeof(ring_name), "ring_%s_u%u", 
+                 is_to_nic ? "to_nic" : "to_rd", owner_id);
+        
+        // Flags: SP_SC (Single Producer, Single Consumer) is safest for 1:1 threads
+        // If RNIC is single thread consuming all 'to_nic', use MP_SC for those.
+        unsigned flags = RING_F_SP_ENQ | RING_F_SC_DEQ;
+        
+        rings[i] = rte_ring_create(ring_name, RING_SIZE, SOCKET_ID_ANY, flags);
+        
+        if (!rings[i]) {
+            fprintf(stderr, "Failed to create ring %s (Error: %s)\n", ring_name, strerror(rte_errno));
+            // Cleanup existing rings
+            for (uint32_t k = 0; k < i; k++) rte_ring_free(rings[k]);
+            free(rings); free(store);
+            if (csv) fclose(csv);
+            rte_eal_cleanup();
+            return 1;
+        }
+    }
+
     printf("\nturn  write_blk  read_blk/req  total_read_blk  write_GiB  write_s  write_GiB/s  read_GiB  read_s  agg_read_GiB/s  fails   checksum\n"); 
     printf("----  ---------  ------------  --------------  ---------  -------  -----------  --------  ------  --------------  ------  ----------\n"); 
  
@@ -851,7 +1070,7 @@ int main(int argc, char **argv)
         //     return 1; 
         // } 
 
-        if (read_rdma(&cfg, store, chunk_bytes, turn, &read_sec, 
+        if (read_rdma(&cfg, rings, store, chunk_bytes, turn, &read_sec, 
                             &read_blocks, &fails, &checksum) != 0) { 
             if (csv) fclose(csv); 
             free(store); 
