@@ -27,8 +27,10 @@
  *   requests=32 => 32 pthreads, req i -> thread i 
  * 
  * Build: 
- *   gcc -O2 -g -std=c11 -Wall -Wextra -pthread \ 
- *       mem_multiturn_accum_read.c -o a.out 
+ *   gcc -O2 -g -std=c11 -Wall -Wextra -pthread \
+    $(pkg-config --cflags libdpdk) \
+    mem_rdma_rtt_simulation.c -o a.out \
+    $(pkg-config --libs libdpdk)
  * 
  * Example: 
  *   ./a.out --rounds 4 
@@ -646,7 +648,7 @@ static void *rnic_thread(void *arg){
     double lat =0;
 
         while(!(dctx->dataplane_started)){
-            usleep(10); 
+            usleep(1); 
         }
         fprintf(stderr, "rnic_thread begin\n");
         //struct reader_ctx *
@@ -746,6 +748,7 @@ static void *rdma_reader_thread(void *arg)
     //         break;
     //     //printf("=wait=\n");
     // }
+
     return NULL; 
 } 
 static void *reader_thread(void *arg) 
@@ -848,7 +851,6 @@ static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8
         }
  
         //int rc = pthread_create(&threads[i], NULL, reader_thread, &args[i]); 
-        int rc = pthread_create(&threads[i], NULL, rdma_reader_thread, &args[i]); 
 
         if (rc != 0) { 
             errno = rc; 
@@ -874,6 +876,19 @@ static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8
     dctx->ntime = now_ns(); 
     int rc = pthread_create(&threads[cfg->requests], NULL, rnic_thread, dctx); 
     
+    for (uint32_t i = 0; i < cfg->requests; i++) { 
+        int rc = pthread_create(&threads[i], NULL, rdma_reader_thread, &args[i]); 
+    
+        if (rc != 0) { 
+            errno = rc; 
+            perror("pthread_create"); 
+            gate_open_after_created(&ctx.start, created); 
+            ret = -1; 
+            goto join_out; 
+        }
+        created++; 
+    }
+
     double t0 = now_sec(); 
     gate_open(&ctx.start); 
     for (uint32_t i = 0; i < cfg->requests; i++) 
