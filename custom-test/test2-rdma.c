@@ -41,7 +41,6 @@
 #include <getopt.h> 
 #include <inttypes.h> 
 #include <pthread.h> 
-#include <stdatomic.h> 
 #include <stdbool.h> 
 #include <stdint.h> 
 #include <stdio.h> 
@@ -52,6 +51,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdatomic.h>
 
 // // DPDK Headers
 // #include <rte_ring.h>
@@ -111,6 +111,7 @@ struct cfg {
 }; 
  
 struct rdma_req{
+    uint64_t req_id;
     double stime;       //ns
     double expire_time; //ns
 };
@@ -143,18 +144,16 @@ struct sweep_ctx {
  
 struct worker_arg { 
     struct sweep_ctx *ctx; 
+    struct device_ctx *dctx;
     uint8_t *scratch; 
     uint32_t request_id; 
     struct rdma_req *rdma_req;
 
-    struct rte_ring *to_nic;        //single queue * multi-queue **
-    struct rte_ring *to_reader;     //single queue * multi-queue **
-
+    // struct rte_ring *to_nic;        //single queue * multi-queue **
+    // struct rte_ring *to_reader;     //single queue * multi-queue **
     // New Queue Pointers
     struct mpsc_queue *to_nic;        // MPSC: Many readers -> 1 RNIC
     struct mpsc_node *node_pool;      // Pre-allocated node for this worker
-
-
 }; 
 
 //uint64_t lag=0;
@@ -175,13 +174,88 @@ struct device_ctx
     bool dataplane_started;
 
     uint32_t num_readers;
-    struct reader_arg **reader_args; 
-    struct rte_ring **to_nic;
-    struct rte_ring **to_reader;
+    struct worker_arg **reader_args; 
+
+    //struct reader_arg **reader_args; 
+    // struct rte_ring **to_nic;
+    // struct rte_ring **to_reader;
+
+
+    // Single Queue instance for the RNIC thread to consume from
+    struct mpsc_queue rnic_queue; 
+    
+    // Simple array or another queue for responses (RNIC -> Readers)
+    // Since RNIC is single threaded, a simple locked array or completion event works too.
+    // But to keep it lock-free symmetric, let's use an array of atomic pointers for responses
+    _Atomic(struct rdma_req *) *responses; // Index by request_id
+    _Atomic(bool) *response_ready;         // Flag by request_id
 
     struct nic *nic_bandwidth_simulation;
 };
- 
+
+struct mpsc_node {
+    struct mpsc_node *next;
+    struct rdma_req *req; // The payload
+};
+struct mpsc_queue {
+    _Atomic(struct mpsc_node *) head;
+    _Atomic(struct mpsc_node *) tail;
+    struct mpsc_node stub; // Sentinel node to simplify logic
+};
+
+// Initialize the queue
+static void mpsc_init(struct mpsc_queue *q) {
+    q->stub.next = NULL;
+    atomic_store(&q->head, &q->stub);
+    atomic_store(&q->tail, &q->stub);
+}
+
+// Enqueue (Multi-Producer safe)
+// Returns true on success
+static bool mpsc_enqueue(struct mpsc_queue *q, struct mpsc_node *node) {
+    node->next = NULL;
+    
+    // Swap the node into the tail position atomically
+    struct mpsc_node *prev_tail = atomic_exchange_explicit(&q->tail, node, memory_order_acq_rel);
+    
+    // Link the previous tail to the new node
+    atomic_store_explicit(&prev_tail->next, node, memory_order_release);
+    
+    return true;
+}
+
+// Dequeue (Single-Consumer only)
+// Returns the node, or NULL if empty
+static struct mpsc_node *mpsc_dequeue(struct mpsc_queue *q) {
+    struct mpsc_node *head = atomic_load_explicit(&q->head, memory_order_relaxed);
+    struct mpsc_node *next = atomic_load_explicit(&head->next, memory_order_acquire);
+    
+    if (head == &q->stub) {
+        if (next == NULL) {
+            return NULL; // Queue is empty
+        }
+        // Move head forward (casually, since we are the only consumer)
+        atomic_store_explicit(&q->head, next, memory_order_relaxed);
+        head = next;
+        next = atomic_load_explicit(&head->next, memory_order_acquire);
+    }
+    
+    if (next != NULL) {
+        atomic_store_explicit(&q->head, next, memory_order_relaxed);
+        return head; // Return the node containing data
+    }
+    
+    // Check if tail is pointing to head (queue might have just become empty)
+    struct mpsc_node *tail = atomic_load_explicit(&q->tail, memory_order_acquire);
+    if (head == tail) {
+        return NULL;
+    }
+    
+    // Tail is moving, retry logic or return NULL if strictly empty check needed
+    // For this simulation, returning NULL here usually means "check again soon"
+    return NULL; 
+}
+
 static void usage(const char *prog) 
 { 
     fprintf(stderr, 
@@ -639,7 +713,9 @@ static void *rnic_thread(void *arg){
     struct nic *nic = dctx->nic_bandwidth_simulation;
     uint32_t num_readers = dctx->num_readers;
     struct worker_arg *rargs = NULL; 
+    
     //struct rdma_req *req=NULL;
+    struct mpsc_queue *q = &dctx->rnic_queue ;
     int rc=0;
     double now =0;
     double lat =0;
@@ -650,7 +726,14 @@ static void *rnic_thread(void *arg){
         fprintf(stderr, "rnic_thread begin\n");
         //struct reader_ctx *
         while(dctx->dataplane_started){
-            for (uint32_t i =0; i < num_readers; i++){
+            struct mpsc_node *node = mpsc_dequeue(q);
+            if (node == NULL) {
+                usleep(1); // Queue empty, yield slightly
+                continue;
+            }
+            struct rdma_req *req = node->req;
+
+            /*for (uint32_t i =0; i < num_readers; i++){
                 rargs = dctx->reader_args[i];
                 //dctx->to_nic[i] = rargs->to_nic; 
                 //dctx->to_reader[i] = rargs->to_reader;
@@ -673,7 +756,9 @@ static void *rnic_thread(void *arg){
                 if (rc != 1){
                     fprintf(stderr,"RNIC to_reader enqueue failed\n");
                 }
-            }
+            }*/
+            rdma_read(dctx, req);
+            atomic_store_explicit(&dctx->response_ready[req->request_id], true, memory_order_release);
         }
         fprintf(stderr, "rnic_thread dead\n");
 
@@ -684,12 +769,16 @@ static void *rdma_reader_thread(void *arg)
     struct worker_arg *wa = arg; 
     struct sweep_ctx *ctx = wa->ctx; 
     const struct cfg *cfg = ctx->cfg; 
-    struct rdma_req *rdma_req = wa->rdma_req;
 
+    struct rdma_req *rdma_req = wa->rdma_req;
+    struct device_ctx *dctx = wa->dctx; /* You need to pass dctx to worker_arg or access globally */
+    
     uint64_t local_blocks = 0;
     uint64_t local_fail = 0; 
     uint64_t local_sum = 0; 
     uint64_t req = wa->request_id; 
+    rdma_req->req_id = req;
+
     double t0=0;
     double t1=0;
     int rc=0;
@@ -703,15 +792,29 @@ static void *rdma_reader_thread(void *arg)
         if (rc != 1){
             fprintf(stderr,"RNIC to_reader enqueue failed\n");
         }
-        //fprintf(stderr,"Thread %lu sent NIC, wait (now %.2f )\n", req, now_ns());
+        
+        // 2. Enqueue to RNIC (Lock-Free)
+        // Re-use the pre-allocated node for this worker to avoid malloc in hot path
+        wa->node_pool->req = rdma_req;
+        mpsc_enqueue(wa->to_nic, wa->node_pool);
 
-        while( rnic_ring_empty(wa->to_reader) ){
-            continue;
+        //fprintf(stderr,"Thread %lu sent NIC, wait (now %.2f )\n", req, now_ns());
+        // while( rnic_ring_empty(wa->to_reader) ){
+        //     continue;
+        // }
+        // rc= rnic_ring_dequeue(wa->to_reader, (void **)&rdma_req, 1);
+        // if (rc != 1){
+        //     fprintf(stderr,"RNIC to_reader enqueue failed\n");
+        // }
+
+        // 3. Wait for RNIC Response (Spin on atomic flag)
+        // The RNIC thread will set this flag after processing
+        while (!atomic_load_explicit(&dctx->response_ready[req], memory_order_acquire)) {
+            // Optional: pause instruction to reduce power/bus contention
+            usleep(0); 
         }
-        rc= rnic_ring_dequeue(wa->to_reader, (void **)&rdma_req, 1);
-        if (rc != 1){
-            fprintf(stderr,"RNIC to_reader enqueue failed\n");
-        }
+        // Reset flag for next round if needed, or rely on per-sweep allocation
+        // For this benchmark, we just proceed once flagged.
         t1= now_ns();
     }
 
@@ -779,21 +882,19 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
 { 
     pthread_t *threads = calloc(active_requests, sizeof(*threads)); 
     struct worker_arg *args = calloc(active_requests, sizeof(*args)); 
-    
-    if (false){
-        struct device_ctx *dctx = calloc(1, sizeof(*dctx));
-        if (!dctx)
-            goto join_fail;
+    struct device_ctx *dctx = calloc(1, sizeof(*dctx));
+    if (!dctx)
+        goto join_fail;
 
-        // 2. Allocate the NIC simulation struct
-        dctx->nic_bandwidth_simulation = calloc(1, sizeof(struct nic));
-        if (!dctx->nic_bandwidth_simulation) goto join_fail;
-        dctx->dataplane_started = false;
-        // 3. CRITICAL FIX: Allocate the arrays of pointers inside dctx
-        dctx->reader_args = calloc(cfg->requests, sizeof(struct worker_arg *));
-        dctx->to_nic      = calloc(cfg->requests, sizeof(struct rte_ring *));
-        dctx->to_reader   = calloc(cfg->requests, sizeof(struct rte_ring *));
-    }
+    // 2. Allocate the NIC simulation struct
+    dctx->nic_bandwidth_simulation = calloc(1, sizeof(struct nic));
+    if (!dctx->nic_bandwidth_simulation) goto join_fail;
+    dctx->dataplane_started = false;
+    // 3. CRITICAL FIX: Allocate the arrays of pointers inside dctx
+    dctx->reader_args = calloc(cfg->requests, sizeof(struct worker_arg *));
+    // dctx->to_nic      = calloc(cfg->requests, sizeof(struct rte_ring *));
+    // dctx->to_reader   = calloc(cfg->requests, sizeof(struct rte_ring *));
+    
     if (!threads || !args) { 
         perror("alloc thread state"); 
         free(threads); 
@@ -828,12 +929,17 @@ static int run_one_sweep(const struct cfg *cfg, const uint8_t *store,
         } 
         // args[i].to_nic = rings[i*2 ];
         // args[i].to_reader = rings[i*2 +1];
-        // args[i].rdma_req = calloc(1, sizeof(*args[i].rdma_req)); 
-        // args[i].rdma_req->stime=0;
-        // args[i].rdma_req->expire_time=0;
-
+        args[i].rdma_req = calloc(1, sizeof(*args[i].rdma_req)); 
+        args[i].rdma_req->stime=0;
+        args[i].rdma_req->expire_time=0;
+        args[i].dctx = dctx;
+        
+        
         //int rc = pthread_create(&threads[i], NULL, reader_thread, &args[i]); 
         int rc = pthread_create(&threads[i], NULL, rdma_reader_thread, &args[i]); 
+
+
+
         if (rc != 0) { 
             errno = rc; 
             perror("pthread_create"); 
@@ -883,13 +989,13 @@ join_fail:
     gate_destroy(&ctx.start); 
     
     // FIXED: Free device context and its internal arrays
-    // if (dctx) {
-    //     if (dctx->nic_bandwidth_simulation) free(dctx->nic_bandwidth_simulation);
-    //     if (dctx->reader_args) free(dctx->reader_args);
-    //     if (dctx->to_nic) free(dctx->to_nic);
-    //     if (dctx->to_reader) free(dctx->to_reader);
-    //     free(dctx);
-    // }
+    if (dctx) {
+        if (dctx->nic_bandwidth_simulation) free(dctx->nic_bandwidth_simulation);
+        if (dctx->reader_args) free(dctx->reader_args);
+        if (dctx->to_nic) free(dctx->to_nic);
+        if (dctx->to_reader) free(dctx->to_reader);
+        free(dctx);
+    }
 
     free(threads); 
     free(args); 
