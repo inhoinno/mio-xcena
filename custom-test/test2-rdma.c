@@ -737,7 +737,7 @@ static void *rnic_thread(void *arg){
         }
         fprintf(stderr, "rnic_thread begin\n");
         //struct reader_ctx *
-        while(dctx->dataplane_started){
+        while(true){
             struct mpsc_node *node = mpsc_dequeue(q);
             if (node == NULL) {
                 usleep(1); // Queue empty, yield slightly
@@ -806,9 +806,9 @@ static void *rdma_reader_thread(void *arg)
     // }
     // 2. Enqueue to RNIC (Lock-Free)
     // Re-use the pre-allocated node for this worker to avoid malloc in hot path
+    fprintf(stderr, "reader thread begin\n ");
     wa->node_pool->req = rdma_req;
     mpsc_enqueue(wa->to_nic, wa->node_pool);
-
     //fprintf(stderr,"Thread %lu sent NIC, wait (now %.2f )\n", req, now_ns());
     // while( rnic_ring_empty(wa->to_reader) ){
     //     continue;
@@ -826,6 +826,7 @@ static void *rdma_reader_thread(void *arg)
     // Reset flag for next round if needed, or rely on per-sweep allocation
     // For this benchmark, we just proceed once flagged.
     t1= now_ns();
+    fprintf(stderr, "reader OUT\n ");
 
     gate_wait(&ctx->start); 
     for (uint64_t blk = 0; blk < cfg->req_per_blocks; blk++) { 
