@@ -27,8 +27,10 @@
  *   requests=32 => 32 pthreads, req i -> thread i 
  * 
  * Build: 
- *   gcc -O2 -g -std=c11 -Wall -Wextra -pthread \ 
- *       mem_multiturn_accum_read.c -o a.out 
+ *   gcc -O2 -g -std=c11 -Wall -Wextra -pthread \
+    $(pkg-config --cflags libdpdk) \
+    mem_rdma_rtt_simulation.c -o a.out \
+    $(pkg-config --libs libdpdk)
  * 
  * Example: 
  *   ./a.out --rounds 4 
@@ -593,7 +595,7 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
     //femu_err("[Inho ] delt : %lx            ",delta_time);    
     double delta_time_ns = delta_time/pow(2,10)/(Interface_RNICGen6x100G_bw);  
     double now =0;
-    fprintf(stdout, "Tx time : %.2f     \n", delta_time_ns);
+    //fprintf(stdout, "Tx time : %.2f     \n", delta_time_ns);
     //100Gbps 200Gbps 400Gbps simulation
     struct nic *nic = dctx->nic_bandwidth_simulation;
 
@@ -627,8 +629,8 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
     nic->stime += delta_time_ns;
     //femu_err("[inho] lag : %lx\n", lag);
     //pthread_spin_unlock(&n->pci_lock);
-    fprintf(stdout, "Tx Size: %.2f MB, BW: %.2f MB/s, Time: %.2f us, Lag: %.2f us\n", 
-             nk/1024, Interface_RNICGen6x100G_bw, delta_time_ns/1000.0, lag/1000.0);
+    //fprintf(stdout, "Tx Size: %.2f MB, BW: %.2f MB/s, Time: %.2f us, Lag: %.2f us\n", 
+    //         nk/1024, Interface_RNICGen6x100G_bw, delta_time_ns/1000.0, lag/1000.0);
 
     return 0;
 }
@@ -645,38 +647,38 @@ static void *rnic_thread(void *arg){
     double now =0;
     double lat =0;
 
-    while(!(dctx->dataplane_started)){
-        usleep(10); 
-    }
-    fprintf(stderr, "rnic_thread begin\n");
-    //struct reader_ctx *
-    while(true){
-        for (uint32_t i =0; i < num_readers; i++){
-            rargs = dctx->reader_args[i];
-            //dctx->to_nic[i] = rargs->to_nic; 
-            //dctx->to_reader[i] = rargs->to_reader;
-            
-            if ( rnic_ring_empty(rargs->to_nic) ){
-                continue;
-            }
-            // FIXED: Use struct rdma_req * instead of read_ctx *
-            struct rdma_req *req_ptr = NULL;
+        while(!(dctx->dataplane_started)){
+            usleep(1); 
+        }
+        fprintf(stderr, "rnic_thread begin\n");
+        //struct reader_ctx *
+        while(dctx->dataplane_started){
+            for (uint32_t i =0; i < num_readers; i++){
+                rargs = dctx->reader_args[i];
+                //dctx->to_nic[i] = rargs->to_nic; 
+                //dctx->to_reader[i] = rargs->to_reader;
+                
+                if ( rnic_ring_empty(rargs->to_nic) ){
+                    continue;
+                }
+                // FIXED: Use struct rdma_req * instead of read_ctx *
+                struct rdma_req *req_ptr = NULL;
 
-            rc = rnic_ring_dequeue( rargs->to_nic, (void **)&req_ptr, 1);
-            if (rc != 1){
-                fprintf(stderr,"RNIC dequeue failed\n");
-                    continue; 
-            }
-            rdma_read(dctx, req_ptr);
-            //req->expire_time += lat;
+                rc = rnic_ring_dequeue( rargs->to_nic, (void **)&req_ptr, 1);
+                if (rc != 1){
+                    fprintf(stderr,"RNIC dequeue failed\n");
+                        continue; 
+                }
+                rdma_read(dctx, req_ptr);
+                //req->expire_time += lat;
 
-            rc= rnic_ring_enqueue(rargs->to_reader, (void **)&req_ptr, 1);
-            if (rc != 1){
-                fprintf(stderr,"RNIC to_reader enqueue failed\n");
+                rc= rnic_ring_enqueue(rargs->to_reader, (void **)&req_ptr, 1);
+                if (rc != 1){
+                    fprintf(stderr,"RNIC to_reader enqueue failed\n");
+                }
             }
         }
-    }
-    fprintf(stderr, "rnic_thread dead\n");
+        fprintf(stderr, "rnic_thread dead\n");
 
     return NULL;
 }
@@ -694,27 +696,29 @@ static void *rdma_reader_thread(void *arg)
     double now=0;
     int rc=0;
 
+    if (false) {
+        
+        rdma_req->stime  = now_ns();
+        rdma_req->expire_time = rdma_req->stime;
+
+        /* 1 RDMA - Send to NIC */
+        rc= rnic_ring_enqueue(ra->to_nic, (void **)&rdma_req, 1);
+        if (rc != 1){
+            fprintf(stderr,"RNIC to_reader enqueue failed\n");
+        }
+        //fprintf(stderr,"Thread %lu sent NIC, wait (now %.2f )\n", req, now_ns());
+
+        while( rnic_ring_empty(ra->to_reader) ){
+            continue;
+        }
+        rc= rnic_ring_dequeue(ra->to_reader, (void **)&rdma_req, 1);
+        if (rc != 1){
+            fprintf(stderr,"RNIC to_reader enqueue failed\n");
+        }
+    }
 
     gate_wait(&ctx->start);
-    rdma_req->stime  = now_ns();
-    rdma_req->expire_time = rdma_req->stime;
-
-    /* 1 RDMA - Send to NIC */
-    rc= rnic_ring_enqueue(ra->to_nic, (void **)&rdma_req, 1);
-    if (rc != 1){
-        fprintf(stderr,"RNIC to_reader enqueue failed\n");
-    }
-    fprintf(stderr,"Thread %lu sent NIC, wait (now %.2f )\n", req, now_ns());
-
-    while( rnic_ring_empty(ra->to_reader) ){
-        continue;
-    }
-    
-    rc= rnic_ring_dequeue(ra->to_reader, (void **)&rdma_req, 1);
-    if (rc != 1){
-        fprintf(stderr,"RNIC to_reader enqueue failed\n");
-    }
-    fprintf(stderr,"Thread %lu fin NIC (now %.2f )\n", req, now_ns());
+    //fprintf(stderr,"Thread %lu fin NIC (now %.2f )\n", req, now_ns());
     for (uint64_t blk = 0; blk < ctx->read_blocks_per_req; blk++) { 
         const uint8_t *src = const_block_ptr(cfg, ctx->store, 
                                              ctx->chunk_bytes, req, blk); 
@@ -739,7 +743,7 @@ static void *rdma_reader_thread(void *arg)
     //delay logic 
     //while ((req = pqueue_peek())){
     
-    now = now_ns();
+    //now = now_ns();
     //fprintf(stderr,"Thread %lu wait (%.2f , %.2f) start wait %.2f ns\n",now, rdma_req->expire_time, now - rdma_req->expire_time);
     // for (;;){
     //     now = now_ns();
@@ -747,6 +751,7 @@ static void *rdma_reader_thread(void *arg)
     //         break;
     //     //printf("=wait=\n");
     // }
+
     return NULL; 
 } 
 static void *reader_thread(void *arg) 
@@ -821,7 +826,6 @@ static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8
     atomic_init(&ctx.verify_fail, 0); 
     atomic_init(&ctx.checksum, 0); 
     gate_init(&ctx.start, cfg->requests);
- 
     int ret = 0; 
     uint32_t created = 0; 
     for (uint32_t i = 0; i < cfg->requests; i++) { 
@@ -849,32 +853,43 @@ static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8
         }
  
         //int rc = pthread_create(&threads[i], NULL, reader_thread, &args[i]); 
-        int rc = pthread_create(&threads[i], NULL, rdma_reader_thread, &args[i]); 
-
-        if (rc != 0) { 
-            errno = rc; 
-            perror("pthread_create"); 
-            gate_open_after_created(&ctx.start, created); 
-            ret = -1; 
-            goto join_out; 
-        } 
+        // if (rc != 0) { 
+        //     errno = rc; 
+        //     perror("pthread_create"); 
+        //     gate_open_after_created(&ctx.start, created); 
+        //     ret = -1; 
+        //     goto join_out; 
+        // } 
 
         dctx->reader_args[i] = &args[i];
         created++; 
     } 
 
     //assert(dctx->to_nic != NULL);
-    assert(dctx->reader_args != NULL);
-    for (uint32_t i = 0; i < cfg->requests; i++) { 
-        assert(dctx->reader_args[i]->to_nic != NULL);
-        assert(dctx->reader_args[i]->to_reader != NULL);
-    }
-    dctx->dataplane_started = true;
-    dctx->num_readers = cfg->requests;
-    dctx->stime = now_ns(); 
-    dctx->ntime = now_ns(); 
-    int rc = pthread_create(&threads[cfg->requests], NULL, rnic_thread, dctx); 
+    // assert(dctx->reader_args != NULL);
+    // for (uint32_t i = 0; i < cfg->requests; i++) { 
+    //     assert(dctx->reader_args[i]->to_nic != NULL);
+    //     assert(dctx->reader_args[i]->to_reader != NULL);
+    // }
+    // dctx->dataplane_started = true;
+    // dctx->num_readers = cfg->requests;
+    // dctx->stime = now_ns(); 
+    // dctx->ntime = now_ns(); 
+    // int rc = pthread_create(&threads[cfg->requests], NULL, rnic_thread, dctx); 
     
+    for (uint32_t i = 0; i < cfg->requests; i++) { 
+        int rc = pthread_create(&threads[i], NULL, rdma_reader_thread, &args[i]); 
+    
+        if (rc != 0) { 
+            errno = rc; 
+            perror("pthread_create"); 
+            gate_open_after_created(&ctx.start, created); 
+            ret = -1; 
+            goto join_out; 
+        }
+        created++; 
+    }
+
     double t0 = now_sec(); 
     gate_open(&ctx.start); 
     for (uint32_t i = 0; i < cfg->requests; i++) 
@@ -882,7 +897,8 @@ static int read_rdma(const struct cfg *cfg, struct rte_ring **rings, const uint8
     created = 0; 
     double t1 = now_sec(); 
     dctx->dataplane_started = false;
- 
+    pthread_join(threads[cfg->requests], NULL); 
+
     *out_sec = t1 - t0; 
     *out_blocks = atomic_load_explicit(&ctx.blocks_read, memory_order_relaxed); 
     *out_fails = atomic_load_explicit(&ctx.verify_fail, memory_order_relaxed); 
