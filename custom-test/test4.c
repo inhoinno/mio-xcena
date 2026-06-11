@@ -648,30 +648,34 @@ static void *rnic_thread(void *arg){
     }
     fprintf(stderr, "rnic_thread begin\n");
     //struct reader_ctx *
-    for (uint32_t i =0; i < num_readers; i++){
-        rargs = dctx->reader_args[i];
-        //dctx->to_nic[i] = rargs->to_nic; 
-        //dctx->to_reader[i] = rargs->to_reader;
-        
-        if ( rnic_ring_empty(rargs->to_nic) ){
-            continue;
-        }
-        // FIXED: Use struct rdma_req * instead of read_ctx *
-        struct rdma_req *req_ptr = NULL;
+    while(true){
+        for (uint32_t i =0; i < num_readers; i++){
+            rargs = dctx->reader_args[i];
+            //dctx->to_nic[i] = rargs->to_nic; 
+            //dctx->to_reader[i] = rargs->to_reader;
+            
+            if ( rnic_ring_empty(rargs->to_nic) ){
+                continue;
+            }
+            // FIXED: Use struct rdma_req * instead of read_ctx *
+            struct rdma_req *req_ptr = NULL;
 
-        rc = rnic_ring_dequeue( rargs->to_nic, (void **)&req_ptr, 1);
-        if (rc != 1){
-            fprintf(stderr,"RNIC dequeue failed\n");
-                continue; 
-        }
-        rdma_read(dctx, req_ptr);
-        //req->expire_time += lat;
+            rc = rnic_ring_dequeue( rargs->to_nic, (void **)&req_ptr, 1);
+            if (rc != 1){
+                fprintf(stderr,"RNIC dequeue failed\n");
+                    continue; 
+            }
+            rdma_read(dctx, req_ptr);
+            //req->expire_time += lat;
 
-        rc= rnic_ring_enqueue(rargs->to_reader, (void **)&req_ptr, 1);
-        if (rc != 1){
-            fprintf(stderr,"RNIC to_reader enqueue failed\n");
+            rc= rnic_ring_enqueue(rargs->to_reader, (void **)&req_ptr, 1);
+            if (rc != 1){
+                fprintf(stderr,"RNIC to_reader enqueue failed\n");
+            }
         }
     }
+    fprintf(stderr, "rnic_thread dead\n");
+
     return NULL;
 }
 
