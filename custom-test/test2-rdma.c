@@ -236,48 +236,48 @@ static uint64_t parse_size(const char *s, bool *ok)
     return v; 
 } 
  
-struct rte_ring *rnic_ring_create(enum custom_ring_type type, size_t count)
-{
-	char ring_name[64];
-	static uint32_t ring_num = 0;
-	unsigned flags = 0;
+// struct rte_ring *rnic_ring_create(enum custom_ring_type type, size_t count)
+// {
+// 	char ring_name[64];
+// 	static uint32_t ring_num = 0;
+// 	unsigned flags = 0;
 
-	switch (type) {
-	case FEMU_RING_TYPE_SP_SC:
-		flags = RING_F_SP_ENQ | RING_F_SC_DEQ;
-		break;
-	case FEMU_RING_TYPE_MP_SC:
-		flags = RING_F_SC_DEQ;
-		break;
-	case FEMU_RING_TYPE_MP_MC:
-		flags = 0;
-		break;
-	default:
-		return NULL;
-	}
+// 	switch (type) {
+// 	case FEMU_RING_TYPE_SP_SC:
+// 		flags = RING_F_SP_ENQ | RING_F_SC_DEQ;
+// 		break;
+// 	case FEMU_RING_TYPE_MP_SC:
+// 		flags = RING_F_SC_DEQ;
+// 		break;
+// 	case FEMU_RING_TYPE_MP_MC:
+// 		flags = 0;
+// 		break;
+// 	default:
+// 		return NULL;
+// 	}
 
-	snprintf(ring_name, sizeof(ring_name), "ring_%u_%d",
-		 __sync_fetch_and_add(&ring_num, 1), getpid());
+// 	snprintf(ring_name, sizeof(ring_name), "ring_%u_%d",
+// 		 __sync_fetch_and_add(&ring_num, 1), getpid());
 
-	//return rte_ring_create(ring_name, count, flags);
-    return rte_ring_create(ring_name, count, SOCKET_ID_ANY, flags);
-}
-void rnic_ring_free (struct rte_ring *ring ){
-    rte_ring_free((struct rte_ring *) ring);
-}
+// 	//return rte_ring_create(ring_name, count, flags);
+//     return rte_ring_create(ring_name, count, SOCKET_ID_ANY, flags);
+// }
+// void rnic_ring_free (struct rte_ring *ring ){
+//     rte_ring_free((struct rte_ring *) ring);
+// }
 
-size_t rnic_ring_enqueue(struct rte_ring *ring, void **objs, size_t count)
-{
-    return rte_ring_enqueue_bulk((struct rte_ring *)ring, objs, count, NULL);
-}
-bool rnic_ring_empty(struct rte_ring *ring)
-{
-    return rte_ring_count(ring) == 0;
-}
-size_t rnic_ring_dequeue(struct rte_ring *ring, void **objs, size_t count)
-{
-    return rte_ring_dequeue_burst((struct rte_ring *)ring, objs, count, NULL);
-}
+// size_t rnic_ring_enqueue(struct rte_ring *ring, void **objs, size_t count)
+// {
+//     return rte_ring_enqueue_bulk((struct rte_ring *)ring, objs, count, NULL);
+// }
+// bool rnic_ring_empty(struct rte_ring *ring)
+// {
+//     return rte_ring_count(ring) == 0;
+// }
+// size_t rnic_ring_dequeue(struct rte_ring *ring, void **objs, size_t count)
+// {
+//     return rte_ring_dequeue_burst((struct rte_ring *)ring, objs, count, NULL);
+// }
 
 static int parse_u32_arg(const char *name, const char *value, uint32_t *out) 
 { 
@@ -1009,3 +1009,4 @@ int main(int argc, char **argv)
     free(store); 
     return 0; 
 }
+
