@@ -597,7 +597,7 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
     //100Gbps 200Gbps 400Gbps simulation
     struct nic *nic = dctx->nic_bandwidth_simulation;
 
-    if ( true ) {
+    if ( false ) {
         //lock
         //pthread_spin_lock(&n->pci_lock);
         if(nic->ntime + 100 <  req->stime ){
@@ -623,6 +623,7 @@ double rdma_read ( struct device_ctx *dctx , struct rdma_req *req){
             req->expire_time+=lag;
         }
     }
+    req->expire_time += 78.125 * (nk);
     nic->stime += delta_time_ns;
     //femu_err("[inho] lag : %lx\n", lag);
     //pthread_spin_unlock(&n->pci_lock);
