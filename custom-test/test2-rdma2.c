@@ -745,6 +745,8 @@ static void *rnic_thread(void *arg)
 
         struct rdma_req *req = node->req;
         double now = now_ns();
+        req->stime = now;
+        req->expire_time = now;
 
         /* ---- calculate: serialized link occupancy ---- */
         if (true){ 
