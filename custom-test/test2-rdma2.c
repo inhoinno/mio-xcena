@@ -728,7 +728,7 @@ static void *rnic_thread(void *arg)
     const uint64_t req_bytes = (uint64_t)cfg->req_per_blocks * cfg->block_bytes;
     /* service time in ns:  bytes / (bw MB/s)  ==  bytes * 1000 / bw  ns */
     const double service_ns = (double)req_bytes * 1000.0 / (double)n->bw;
-    const double delta_time_ns = service_ns-20000;
+    const double delta_time_ns = service_ns;
 
     /* link timeline starts when the dataplane comes up, not at 0 —
      * otherwise the first request would see a bogus multi-second idle gap */
