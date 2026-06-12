@@ -699,7 +699,7 @@ static void *rnic_thread(void *arg)
     const uint64_t req_bytes = (uint64_t)cfg->req_per_blocks * cfg->block_bytes;
     /* service time in ns:  bytes / (bw MB/s)  ==  bytes * 1000 / bw  ns */
     const double service_ns = (double)req_bytes * 1000.0 / (double)n->bw;
-
+    const double delta_time_ns = service_ns;
     uint32_t done = 0;
 
     while (done < dctx->num_readers) {
@@ -714,15 +714,35 @@ static void *rnic_thread(void *arg)
         double now = now_ns();
 
         /* ---- calculate: serialized link occupancy ---- */
-        if (n->ntime < now){
-            n->ntime = now;                 /* link was idle */   
+        if (true){ 
+            if (n->ntime < req->stime ){
+                lag=0;
+                n->stime = req->stime;
+                //High bandwidth = large window , Small bandwidth = small window
+                n->ntime = n->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns;
+                req->expire_time += 1000; //when NIC is idle , almost no latency * (nk);
+            }
+            else if (n->ntime < (n->stime + delta_time_ns)){
+                //update lag
+                lag = (n->ntime - req->stime);
+                n->stime = n->ntime;
+                n->ntime = n->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns; //1ms
+                req->expire_time += lag;      
+            }else if(req->stime < n->ntime && lag > 0){
+                req->expire_time += lag;
+            }
+            req->expire_time += 1000;
+            n->stime += delta_time_ns;
+        }else {
+            if (n->ntime < now){
+                n->ntime = now;                 /* link was idle */   
+            }
+            n->busy = true;
+            n->stime = n->ntime;                /* when this transfer starts */
+            n->ntime += service_ns;             /* link busy until then */
+            req->expire_time = n->ntime;        /* completion timestamp */
+            lag = n->ntime - now;               /* current backlog on the link */
         }
-        n->busy = true;
-        n->stime = n->ntime;                /* when this transfer starts */
-        n->ntime += service_ns;             /* link busy until then */
-        req->expire_time = n->ntime;        /* completion timestamp */
-        lag = n->ntime - now;               /* current backlog on the link */
-
 #if RNIC_SIMULATE_DELAY
         /* hold the completion until the simulated transfer finishes */
         while (now_ns() < req->expire_time)
