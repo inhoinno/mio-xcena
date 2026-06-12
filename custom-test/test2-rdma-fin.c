@@ -75,6 +75,19 @@
  * 0 = rnic_thread only stamps expire_time and signals immediately. */
 #define RNIC_SIMULATE_DELAY 1
 
+/* === CHANGED: polling primitive for accurate link simulation.
+ * sched_yield() hands the CPU to the scheduler — wakeup latency is
+ * unbounded (µs to ms), which distorts both dequeue latency and the
+ * expire_time deadline. A pause/yield *instruction* keeps the thread
+ * on-CPU spinning, so the polling granularity is nanoseconds. */
+#if defined(__x86_64__) || defined(__i386__)
+# define cpu_relax() __builtin_ia32_pause()
+#elif defined(__aarch64__) || defined(__arm__)
+# define cpu_relax() __asm__ __volatile__("yield" ::: "memory")
+#else
+# define cpu_relax() __asm__ __volatile__("" ::: "memory")
+#endif
+
 enum custom_ring_type {
     FEMU_RING_TYPE_SP_SC,   /* Single-producer, single-consumer */
     FEMU_RING_TYPE_MP_SC,   /* Multi-producer, single-consumer */
@@ -746,7 +759,8 @@ static void *rnic_thread(void *arg)
 #if RNIC_SIMULATE_DELAY
         /* hold the completion until the simulated transfer finishes */
         while (now_ns() < req->expire_time)
-            sched_yield();
+            cpu_relax();
+        //sched_yield();
 #endif
         n->busy = false;
 
