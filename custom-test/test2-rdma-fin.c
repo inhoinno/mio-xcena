@@ -714,8 +714,9 @@ static void *rnic_thread(void *arg)
         double now = now_ns();
 
         /* ---- calculate: serialized link occupancy ---- */
-        if (n->ntime < now)
-            n->ntime = now;                 /* link was idle */
+        if (n->ntime < now){
+            n->ntime = now;                 /* link was idle */   
+        }
         n->busy = true;
         n->stime = n->ntime;                /* when this transfer starts */
         n->ntime += service_ns;             /* link busy until then */
