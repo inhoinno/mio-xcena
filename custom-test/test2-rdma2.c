@@ -778,6 +778,13 @@ static void *rnic_thread(void *arg)
             req->expire_time = n->ntime;        /* completion timestamp */
             lag = n->ntime - now;               /* current backlog on the link */
         }
+
+#if RNIC_SIMULATE_DELAY
+        /* hold the completion until the simulated transfer finishes */
+        while (now_ns() < req->expire_time)
+            cpu_relax();
+#endif
+
         /* ---- dispatch back immediately: no waiting in the RNIC ----
          * release pairs with the reader's acquire load and publishes
          * expire_time. The reader enforces the deadline. */
