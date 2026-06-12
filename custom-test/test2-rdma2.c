@@ -64,8 +64,8 @@
 #define Interface_PCIeGen3x4_bwmb (4034 * MiB)      /* MB/s */
 #define Interface_PCIeGen3x4_bw 4034
 
-#define Interface_RNICGen6x100G_bwmb (4096 * MiB)  /* MB/s */
-#define Interface_RNICGen6x100G_bw 4096            /* MB/s */
+#define Interface_RNICGen6x100G_bwmb (12500 * MiB)  /* MB/s */
+#define Interface_RNICGen6x100G_bw 12500            /* MB/s */
 #define Interface_RNICGen6x200G_bwmb (25000 * MiB)  /* MB/s */
 #define Interface_RNICGen6x200G_bw 25000            /* MB/s */
 
