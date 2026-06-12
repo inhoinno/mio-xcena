@@ -728,6 +728,7 @@ static void *rnic_thread(void *arg)
     const uint64_t req_bytes = (uint64_t)cfg->req_per_blocks * cfg->block_bytes;
     /* service time in ns:  bytes / (bw MB/s)  ==  bytes * 1000 / bw  ns */
     const double service_ns = (double)req_bytes * 1000.0 / (double)n->bw;
+    const double delta_time_ns = service_ns;
 
     /* link timeline starts when the dataplane comes up, not at 0 —
      * otherwise the first request would see a bogus multi-second idle gap */
@@ -745,19 +746,36 @@ static void *rnic_thread(void *arg)
         struct rdma_req *req = node->req;
         double now = now_ns();
 
-        /* ---- process latency logic ----
-         * lag = idle gap: how long the link sat UNUSED before this
-         * request arrived. Set only when the link was idle (now > ntime);
-         * a request that queues behind a busy link has lag = 0. */
-        if (now > n->ntime) {
-            lag = now - n->ntime;   /* link was idle for this long */
-            n->ntime = now;         /* transfer starts immediately */
-        } else {
-            lag = 0;                /* link busy: request queues, no idle */
+        /* ---- calculate: serialized link occupancy ---- */
+        if (true){ 
+            if (n->ntime < req->stime ){
+                lag=0;
+                n->stime = req->stime;
+                //High bandwidth = large window , Small bandwidth = small window
+                n->ntime = n->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns;
+                req->expire_time += 1000; //when NIC is idle , almost no latency * (nk);
+            }
+            else if (n->ntime < (n->stime + delta_time_ns)){
+                //update lag
+                lag = (n->ntime - req->stime);
+                n->stime = n->ntime;
+                n->ntime = n->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns; //1ms
+                req->expire_time += lag;      
+            }else if(req->stime < n->ntime && lag > 0){
+                req->expire_time += lag;
+            }
+            req->expire_time += 1000;
+            n->stime += delta_time_ns;
+        }else {
+            if (n->ntime < now){
+                n->ntime = now;                 /* link was idle */   
+            }
+            n->busy = true;
+            n->stime = n->ntime;                /* when this transfer starts */
+            n->ntime += service_ns;             /* link busy until then */
+            req->expire_time = n->ntime;        /* completion timestamp */
+            lag = n->ntime - now;               /* current backlog on the link */
         }
-        n->stime = n->ntime;        /* when this transfer starts on the link */
-        n->ntime += service_ns;     /* link occupied until then */
-        req->expire_time = n->ntime;
 
         /* ---- dispatch back immediately: no waiting in the RNIC ----
          * release pairs with the reader's acquire load and publishes
