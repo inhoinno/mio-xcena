@@ -59,7 +59,7 @@
 
 #define NAND_SLC_READ 20UL * 1000
 #define NAND_SLC_WRITE 200UL * 1000
-#define NVME_DEFAULT_MAX_AZ_SIZE (128 * KiB)
+#define NVME_DEFAULT_MAX_AZ_SIZE (128 * MiB)
 
 #define Interface_PCIeGen3x4_bwmb (4034 * MiB)      /* MB/s */
 #define Interface_PCIeGen3x4_bw 4034
