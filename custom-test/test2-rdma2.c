@@ -760,8 +760,9 @@ static void *rnic_thread(void *arg)
                 lag = (n->ntime - req->stime);
                 n->stime = n->ntime;
                 n->ntime = n->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns; //1ms
-                req->expire_time += lag;      
-            }else if(req->stime < n->ntime && lag > 0){
+                req->expire_time += lag;   
+                n->stime += delta_time_ns;   
+            }else if((req->stime < n->ntime )&& (lag > 0)){
                 req->expire_time += lag;
             }
             //req->expire_time += 2000;
