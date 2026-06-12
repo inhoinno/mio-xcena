@@ -667,15 +667,15 @@ static void *rdma_reader_thread(void *arg)
         cpu_relax();
     }
 
-#if RNIC_SIMULATE_DELAY
-    /* === CHANGED: 3. The READER enforces the simulated link deadline.
-     * The RNIC only stamped expire_time; the transfer "completes" here.
-     * If the queueing/signalling path already took longer than the
-     * simulated transfer (now >= expire_time), this loop never runs —
-     * the reader does not wait. */
-    while (now_ns() < rdma_req->expire_time)
-        cpu_relax();
-#endif
+// #if RNIC_SIMULATE_DELAY
+//     /* === CHANGED: 3. The READER enforces the simulated link deadline.
+//      * The RNIC only stamped expire_time; the transfer "completes" here.
+//      * If the queueing/signalling path already took longer than the
+//      * simulated transfer (now >= expire_time), this loop never runs —
+//      * the reader does not wait. */
+//     while (now_ns() < rdma_req->expire_time)
+//         cpu_relax();
+// #endif
     t1 = now_ns();
     (void)t1;
     /* fprintf(stderr, "Thread %" PRIu64 " queuing+nic %.2lf us (lat %.2f us)\n",
