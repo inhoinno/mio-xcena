@@ -753,7 +753,7 @@ static void *rnic_thread(void *arg)
                 n->stime = req->stime;
                 //High bandwidth = large window , Small bandwidth = small window
                 n->ntime = n->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns;
-                req->expire_time += 1000; //when NIC is idle , almost no latency * (nk);
+                //req->expire_time += 1000; //when NIC is idle , almost no latency * (nk);
             }
             else if (n->ntime < (n->stime + delta_time_ns)){
                 //update lag
@@ -764,7 +764,8 @@ static void *rnic_thread(void *arg)
             }else if(req->stime < n->ntime && lag > 0){
                 req->expire_time += lag;
             }
-            req->expire_time += 1000;
+            //req->expire_time += 2000;
+            req->expire_time += delta_time_ns;
             n->stime += delta_time_ns;
         }else {
             if (n->ntime < now){
@@ -776,7 +777,6 @@ static void *rnic_thread(void *arg)
             req->expire_time = n->ntime;        /* completion timestamp */
             lag = n->ntime - now;               /* current backlog on the link */
         }
-
         /* ---- dispatch back immediately: no waiting in the RNIC ----
          * release pairs with the reader's acquire load and publishes
          * expire_time. The reader enforces the deadline. */
