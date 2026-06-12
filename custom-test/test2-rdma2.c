@@ -768,7 +768,7 @@ static void *rnic_thread(void *arg)
                 req->expire_time += lag;
             }
             //req->expire_time += 2000;
-            req->expire_time += delta_time_ns;
+            //req->expire_time += delta_time_ns;
             n->stime += delta_time_ns;
         }else {
             if (n->ntime < now){
