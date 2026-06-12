@@ -754,14 +754,14 @@ static void *rnic_thread(void *arg)
                 lag=0;
                 n->stime = req->stime;
                 //High bandwidth = large window , Small bandwidth = small window
-                n->ntime = n->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns;
+                n->ntime = n->stime + 1000000; //1ms //Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns;
                 //req->expire_time += 1000; //when NIC is idle , almost no latency * (nk);
             }
             else if (n->ntime < (n->stime + delta_time_ns)){
                 //update lag
                 lag = (n->ntime - req->stime);
                 n->stime = n->ntime;
-                n->ntime = n->stime + Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns; //1ms
+                n->ntime = n->stime + 1000000; //1ms //+ Interface_RNICGen6x100G_bwmb/NVME_DEFAULT_MAX_AZ_SIZE/1000 * delta_time_ns; //1ms
                 req->expire_time += lag;   
                 n->stime += delta_time_ns;   
             }else if((req->stime < n->ntime )&& (lag > 0)){
